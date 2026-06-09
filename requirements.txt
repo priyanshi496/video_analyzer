@@ -1,0 +1,8 @@
+opencv-python
+numpy
+requests
+Pillow
+flask
+tqdm
+python-dotenv
+waitress

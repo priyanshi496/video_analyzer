@@ -1,0 +1,17 @@
+# Local workspace files and folders to ignore
+clips/
+input_videos/
+active_segments.json
+timeline_frames/
+projects/my-reel/runs/
+best_segments.json
+final_highlight_reel.mp4
+analyzer.log
+logs/
+.vscode/
+# Standard Python & OS files
+.venv/
+.env
+__pycache__/
+*.pyc
+.DS_Store

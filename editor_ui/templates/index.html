@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🎬 Upload Videos — Reel Editor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="header-inner">
+      <a href="/" class="logo">
+        <div class="logo-icon">▶</div>
+        <div class="logo-text">Reel<span>Editor</span></div>
+      </a>
+      <div class="header-actions">
+        <button class="btn btn-red" onclick="resetWorkspace()">🧹 Reset Workspace</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="upload-container">
+    <div style="text-align: center; margin-bottom: 32px;">
+      <h2 style="font-size: 24px; margin-bottom: 8px;">Create Cinematic Reel highlights</h2>
+      <p style="color: var(--text-muted); font-size: 14px;">Upload your raw vacation/project videos & photos, and let AI sequence the story arc.</p>
+    </div>
+
+    <section class="panel" style="padding: 24px;">
+      <div class="section-label">Step 1</div>
+      <h3 class="section-title" style="margin-bottom: 20px;">Upload Videos & Photos</h3>
+      
+      <div id="drop-zone" class="upload-zone" onclick="document.getElementById('file-input').click()">
+        <div class="upload-icon">
+          <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="17 8 12 3 7 8"></polyline>
+            <line x1="12" y1="3" x2="12" y2="15"></line>
+          </svg>
+        </div>
+        <div>
+          <h3>Drag & drop files here</h3>
+          <p style="margin-top: 4px;">Supports MP4, MOV, JPG, PNG formats</p>
+        </div>
+        <button class="btn btn-blue" style="margin-top: 8px;">Select Files</button>
+        <input type="file" id="file-input" multiple accept="video/*,image/*" style="display:none" onchange="handleFiles(this.files)" />
+      </div>
+
+      <div class="file-list" id="file-list" style="margin-top: 20px; display: flex; flex-direction: column; gap: 10px;"></div>
+
+      <!-- Custom Editing Instructions -->
+      <div id="directives-container" style="margin-top: 20px; text-align: left; display: none;">
+        <label for="directives-input" style="font-weight: 500; font-size: 13px; display: block; margin-bottom: 8px; color: var(--text-color);">
+          🎯 Custom Editing Instructions (Optional):
+        </label>
+        <textarea id="directives-input" placeholder="e.g. 'scenery 7/10', 'focus on birthday girl', 'people 6/10', or standard directives like 'make it look cinematic, start and end with a flight'..." 
+                  style="width: 100%; min-height: 80px; padding: 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-color); font-family: inherit; font-size: 13px; resize: vertical; box-sizing: border-box;"></textarea>
+        
+        <!-- Upload Order Option -->
+        <label style="display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; font-weight: 500; color: var(--text-color); cursor: pointer;">
+          <input type="checkbox" id="upload-order-checkbox" style="width: 16px; height: 16px; cursor: pointer;" />
+          Use uploaded file order (ignore AI story sequencing)
+        </label>
+      </div>
+
+      <div style="margin-top: 24px; text-align: center;">
+        <button class="btn btn-glowing" id="btn-analyze" onclick="startAnalysis()" style="width: 100%; display: none; font-size: 14px;">
+          🚀 Start AI Story Director
+        </button>
+      </div>
+      
+      <div class="log-terminal" id="log-terminal" style="display: none;">Initializing log stream...</div>
+    </section>
+  </main>
+
+  <script>
+    let uploadedFiles = [];
+
+    // Check if files already uploaded
+    fetch('/api/files').then(r => r.json()).then(data => {
+      if(data.files && data.files.length > 0) {
+        uploadedFiles = data.files.map(f => ({ name: f, status: 'uploaded' }));
+        renderFiles();
+      }
+    });
+
+    const dropZone = document.getElementById('drop-zone');
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('dragover'); handleFiles(e.dataTransfer.files); });
+
+    async function handleFiles(files) {
+      for (const file of files) {
+        uploadedFiles.push({ name: file.name, status: 'uploading...' });
+        renderFiles();
+        
+        const fd = new FormData();
+        fd.append('file', file);
+        
+        try {
+          const res = await fetch('/api/upload', { method: 'POST', body: fd });
+          const data = await res.json();
+          const f = uploadedFiles.find(x => x.name === file.name);
+          f.status = data.ok ? '✅ Ready' : '❌ Error';
+        } catch (e) {
+          uploadedFiles.find(x => x.name === file.name).status = '❌ Error';
+        }
+        renderFiles();
+      }
+    }
+
+    function renderFiles() {
+      const list = document.getElementById('file-list');
+      const btn = document.getElementById('btn-analyze');
+      
+      list.innerHTML = uploadedFiles.map(f => `
+        <div class="file-item">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--text-muted)" stroke-width="2" style="opacity:0.7;">
+              <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect>
+              <line x1="7" y1="2" x2="7" y2="22"></line>
+              <line x1="17" y1="2" x2="17" y2="22"></line>
+              <line x1="2" y1="12" x2="22" y2="12"></line>
+              <line x1="2" y1="7" x2="7" y2="7"></line>
+              <line x1="2" y1="17" x2="7" y2="17"></line>
+              <line x1="17" y1="17" x2="22" y2="17"></line>
+              <line x1="17" y1="7" x2="22" y2="7"></line>
+            </svg>
+            <span class="file-item-name">${f.name}</span>
+          </div>
+          <span class="file-item-status">${f.status}</span>
+        </div>
+      `).join('');
+      
+      const allDone = uploadedFiles.length > 0 && uploadedFiles.every(f => f.status.includes('Ready') || f.status === 'uploaded');
+      btn.style.display = allDone ? 'block' : 'none';
+      document.getElementById('directives-container').style.display = allDone ? 'block' : 'none';
+    }
+
+    async function startAnalysis() {
+      const directives = document.getElementById('directives-input').value;
+      const useUploadedOrder = document.getElementById('upload-order-checkbox').checked;
+
+      document.getElementById('btn-analyze').style.display = 'none';
+      document.getElementById('directives-container').style.display = 'none';
+      document.getElementById('drop-zone').style.display = 'none';
+      document.getElementById('log-terminal').style.display = 'block';
+
+      const res = await fetch('/api/analyze', { 
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ 
+          directives: directives,
+          use_uploaded_order: useUploadedOrder
+        })
+      });
+      const data = await res.json();
+      
+      if (!data.ok) {
+        document.getElementById('log-terminal').textContent = `❌ Error: ${data.error}`;
+        return;
+      }
+
+      const poll = setInterval(async () => {
+        const rStatus = await fetch('/api/analyze_status');
+        const s = await rStatus.json();
+        
+        const rLogs = await fetch('/api/logs');
+        const l = await rLogs.json();
+        
+        const terminal = document.getElementById('log-terminal');
+        
+        if (l.logs) {
+           const isScrolledToBottom = terminal.scrollHeight - terminal.clientHeight <= terminal.scrollTop + 50;
+           terminal.textContent = l.logs;
+           if (isScrolledToBottom) {
+             terminal.scrollTop = terminal.scrollHeight;
+           }
+        }
+        
+        if (s.done) {
+          clearInterval(poll);
+          terminal.textContent += '\n\n✅ Analysis complete! Redirecting to Reel Editor...';
+          terminal.scrollTop = terminal.scrollHeight;
+          setTimeout(() => { window.location.href = '/editor'; }, 1000);
+        } else if (s.error) {
+          clearInterval(poll);
+          terminal.textContent += `\n\n❌ Analysis failed: ${s.error}`;
+          terminal.scrollTop = terminal.scrollHeight;
+          document.getElementById('btn-analyze').style.display = 'block';
+        }
+      }, 1000);
+    }
+
+    async function resetWorkspace() {
+      if (!confirm("Are you sure you want to reset the workspace? This will delete all uploaded videos, clips, frames, cached AI analysis, and final reels.")) {
+        return;
+      }
+      try {
+        const res = await fetch('/api/reset', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+          window.location.href = '/';
+        } else {
+          alert("Error resetting workspace: " + data.error);
+        }
+      } catch (e) {
+        alert("Error resetting workspace: " + e);
+      }
+    }
+  </script>
+</body>
+</html>
