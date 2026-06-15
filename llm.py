@@ -146,7 +146,7 @@ def _post_with_retry(payload: dict, headers: dict, timeout: int, label: str = ""
         payload_copy["chat_template_kwargs"] = {"enable_thinking": True}
         payload_copy["reasoning_budget"] = 128
         payload_copy["temperature"] = 0.0
-        payload_copy["max_tokens"] = min(payload_copy.get("max_tokens", 1200), 1200)
+        payload_copy["max_tokens"] = min(payload_copy.get("max_tokens", 2048), 2048)
 
     import os
     # Route request and select appropriate API key based on the model prefix and circuit health
@@ -416,7 +416,7 @@ def call_openrouter_multiimage(
     raise RuntimeError(f"All models failed for {video_name}. Last error: {last_err}")
 
 
-def call_openrouter_text(prompt: str, api_key: str, model: str, fallbacks: list = None) -> str:
+def call_openrouter_text(prompt: str, api_key: str, model: str, fallbacks: list = None, temperature: float = 0.0) -> str:
     """Text-only call — tries primary model then each fallback."""
     import os
     api_key = os.getenv("OPENROUTER_API_KEY") or api_key
@@ -430,7 +430,7 @@ def call_openrouter_text(prompt: str, api_key: str, model: str, fallbacks: list 
         payload = {
             "model":    model_name,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0,
+            "temperature": temperature,
         }
         result, err = _post_with_retry(payload, headers, timeout=30, label=model_name)
         if result is not None:

@@ -906,6 +906,8 @@ def run_full_analysis(
                 "is_image":           result.get("is_image", False),
                 "scene_category":     seg.get("scene_category", "mixed"),
                 "primary_subjects":   seg.get("primary_subjects", []),
+                "what_happens":       seg.get("what_happens", ""),
+                "mood":               seg.get("mood", ""),
             }
             constructed_seg["ai_score"] = calculate_alignment_score(constructed_seg, directives)
             best_segments.append(constructed_seg)
@@ -947,10 +949,48 @@ def run_full_analysis(
                     k_start, k_end = float(k["start_sec"]), float(k["end_sec"])
                     gap = max(clip_start, k_start) - min(clip_end, k_end)
                     
-                    # If they overlap or have a gap smaller than 1.0s, reject
-                    if overlap_ratio > 0.3 or gap < 1.0:
+                    # If they overlap or have a gap smaller than 2.0s, reject
+                    if overlap_ratio > 0.3 or gap < 2.0:
                         is_ok = False
                         break
+
+                    # Check semantic/visual similarity to detect near-identical frames/shots
+                    clip_loc = clip.get("location_tag", "unknown").lower().strip()
+                    k_loc = k.get("location_tag", "unknown").lower().strip()
+                    clip_cat = clip.get("scene_category", "mixed").lower().strip()
+                    k_cat = k.get("scene_category", "mixed").lower().strip()
+                    
+                    if clip_loc != "unknown" and clip_loc == k_loc:
+                        # Stricter deduplication: If it's the exact same video AND the AI 
+                        # gave it the exact same location tag, check if their primary subjects 
+                        # are different enough to warrant keeping both.
+                        subs_clip = {s.lower().strip() for s in clip.get("primary_subjects", [])}
+                        subs_k = {s.lower().strip() for s in k.get("primary_subjects", [])}
+                        if subs_clip and subs_k:
+                            intersection = subs_clip & subs_k
+                            union = subs_clip | subs_k
+                            jaccard = len(intersection) / len(union) if union else 0.0
+                            # If they share less than 60% of their subjects, keep both
+                            if jaccard < 0.6:
+                                continue
+                        is_ok = False
+                        break
+                        
+                    if clip_cat != "unknown" and clip_cat == k_cat:
+                        # Also check description / reason overlap if categories match but location tags differ
+                        desc_clip = (clip.get("what_happens", "") or clip.get("reason", "")).lower()
+                        desc_k = (k.get("what_happens", "") or k.get("reason", "")).lower()
+                        stop_words = {"the", "a", "an", "on", "in", "of", "and", "or", "to", "for", "with", "at", "by", "from"}
+                        words_clip = {w.strip(",.!?\"'") for w in desc_clip.split() if len(w) > 2 and w not in stop_words}
+                        words_k = {w.strip(",.!?\"'") for w in desc_k.split() if len(w) > 2 and w not in stop_words}
+                        
+                        desc_overlap = 0.0
+                        if words_clip and words_k:
+                            desc_overlap = len(words_clip & words_k) / min(len(words_clip), len(words_k))
+                            
+                        if desc_overlap >= 0.3:
+                            is_ok = False
+                            break
                 if is_ok and len(video_kept) < max_clips:
                     video_kept.append(clip)
             kept.extend(video_kept)

@@ -1,0 +1,156 @@
+{
+  "scenes": [
+    {
+      "id": "scene_0",
+      "video_path": "/Users/priyanshimodi/Documents/projects/TSC/video_analyzer/input_videos/52824D4A-056D-4CA4-B128-EFB8C4A759B6.MP4",
+      "start_sec": 1.31,
+      "end_sec": 3.31,
+      "duration_sec": 2.0,
+      "rotation": 0,
+      "transition": "zoom_in",
+      "transition_duration": 0.5,
+      "captionText": "GREEN | banana | paradise"
+    },
+    {
+      "id": "scene_1",
+      "video_path": "/Users/priyanshimodi/Documents/projects/TSC/video_analyzer/input_videos/CEABAC4C-D62E-4C76-A2F8-572870DFCBEC.MP4",
+      "start_sec": 0.0,
+      "end_sec": 3.5,
+      "duration_sec": 3.5,
+      "rotation": 0,
+      "transition": "dissolve",
+      "transition_duration": 0.5,
+      "captionText": "PEACE | sign | vibes"
+    },
+    {
+      "id": "scene_2",
+      "video_path": "/Users/priyanshimodi/Documents/projects/TSC/video_analyzer/input_videos/CEABAC4C-D62E-4C76-A2F8-572870DFCBEC.MP4",
+      "start_sec": 8.0,
+      "end_sec": 11.27,
+      "duration_sec": 3.2699999999999996,
+      "rotation": 0,
+      "transition": "fade",
+      "transition_duration": 0.5,
+      "captionText": "RELAXED | island | moment"
+    },
+    {
+      "id": "scene_3",
+      "video_path": "/Users/priyanshimodi/Documents/projects/TSC/video_analyzer/input_videos/IMG_7480.MOV",
+      "start_sec": 1.87,
+      "end_sec": 3.73,
+      "duration_sec": 1.8599999999999999,
+      "rotation": 0,
+      "transition": "zoom_in",
+      "transition_duration": 0.5,
+      "captionText": "SACRED | shrine | blooms"
+    },
+    {
+      "id": "scene_4",
+      "video_path": "/Users/priyanshimodi/Documents/projects/TSC/video_analyzer/input_videos/IMG_7480.MOV",
+      "start_sec": 11.56,
+      "end_sec": 14.12,
+      "duration_sec": 2.5599999999999987,
+      "rotation": 0,
+      "transition": "slide_left",
+      "transition_duration": 0.5,
+      "captionText": "BRIDGE | over | abyss"
+    },
+    {
+      "id": "scene_5",
+      "video_path": "/Users/priyanshimodi/Documents/projects/TSC/video_analyzer/input_videos/IMG_6839.MOV",
+      "start_sec": 0.0,
+      "end_sec": 2.5,
+      "duration_sec": 2.5,
+      "rotation": 0,
+      "transition": "cut",
+      "transition_duration": 0,
+      "captionText": "TEMPLE | meets | ocean"
+    },
+    {
+      "id": "scene_6",
+      "video_path": "/Users/priyanshimodi/Documents/projects/TSC/video_analyzer/input_videos/IMG_7838.MOV",
+      "start_sec": 5.5,
+      "end_sec": 6.5,
+      "duration_sec": 1.0,
+      "rotation": 0,
+      "transition": "dissolve",
+      "transition_duration": 0.5,
+      "captionText": "DANCING | shadows | parade"
+    },
+    {
+      "id": "scene_7",
+      "video_path": "/Users/priyanshimodi/Documents/projects/TSC/video_analyzer/input_videos/IMG_7838.MOV",
+      "start_sec": 9.0,
+      "end_sec": 10.0,
+      "duration_sec": 1.0,
+      "rotation": 0,
+      "transition": "slide_right",
+      "transition_duration": 0.5,
+      "captionText": "PARADE | meets | traffic"
+    },
+    {
+      "id": "scene_8",
+      "video_path": "/Users/priyanshimodi/Documents/projects/TSC/video_analyzer/input_videos/IMG_6288.MOV",
+      "start_sec": 2.19,
+      "end_sec": 5.19,
+      "duration_sec": 3.0000000000000004,
+      "rotation": 0,
+      "transition": "fade",
+      "transition_duration": 0.5,
+      "captionText": "STONE | giants | rising"
+    },
+    {
+      "id": "scene_9",
+      "video_path": "/Users/priyanshimodi/Documents/projects/TSC/video_analyzer/input_videos/IMG_6288.MOV",
+      "start_sec": 10.97,
+      "end_sec": 13.97,
+      "duration_sec": 3.0,
+      "rotation": 0,
+      "transition": "zoom_in",
+      "transition_duration": 0.5,
+      "captionText": "COASTLINE | stretches | forever"
+    },
+    {
+      "id": "scene_10",
+      "video_path": "/Users/priyanshimodi/Documents/projects/TSC/video_analyzer/input_videos/IMG_8769.MOV",
+      "start_sec": 10.0,
+      "end_sec": 12.5,
+      "duration_sec": 2.5,
+      "rotation": 0,
+      "transition": "dissolve",
+      "transition_duration": 0.5,
+      "captionText": "CLIFFS | meet | the sea"
+    },
+    {
+      "id": "scene_14",
+      "video_path": "/Users/priyanshimodi/Documents/projects/TSC/video_analyzer/input_videos/IMG_7344.MOV",
+      "start_sec": 0.0,
+      "end_sec": 3.0,
+      "duration_sec": 3.0,
+      "rotation": 0,
+      "transition": "cut",
+      "transition_duration": 0,
+      "captionText": ""
+    },
+    {
+      "id": "scene_15",
+      "video_path": "/Users/priyanshimodi/Documents/projects/TSC/video_analyzer/input_videos/IMG_8962.MOV",
+      "start_sec": 16.5,
+      "end_sec": 18.0,
+      "duration_sec": 1.5,
+      "rotation": 0,
+      "transition": "cut",
+      "transition_duration": 0,
+      "captionText": ""
+    }
+  ],
+  "titleFontSize": 78,
+  "titleWidth": 1320,
+  "signalLineCount": 18,
+  "audio": {
+    "music": {
+      "src": "165111",
+      "volume": 0.4
+    }
+  }
+}

@@ -5,8 +5,140 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>🎬 Upload Videos — Reel Editor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&family=Laila:wght@400;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    /* ── Reel Preferences Form ── */
+    .prefs-form { display: flex; flex-direction: column; gap: 28px; margin-top: 24px; }
+
+    .pref-section { display: flex; flex-direction: column; gap: 12px; }
+    .pref-section-title {
+      font-size: 12px; font-weight: 600; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--text-muted);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .pref-section-title::after {
+      content: ''; flex: 1; height: 1px; background: var(--border-color);
+    }
+
+    /* Pill toggles */
+    .pill-group { display: flex; flex-wrap: wrap; gap: 8px; }
+    .pill {
+      padding: 7px 16px; border-radius: 20px; font-size: 13px; font-weight: 500;
+      border: 1.5px solid var(--border-color); background: transparent;
+      color: var(--text-muted); cursor: pointer;
+      transition: all 0.18s ease; user-select: none;
+    }
+    .pill:hover { border-color: #7c6af7; color: var(--text-color); }
+    .pill.selected {
+      background: linear-gradient(135deg, #7c6af7, #5b4fcf);
+      border-color: transparent; color: #fff;
+      box-shadow: 0 2px 12px rgba(124,106,247,0.35);
+    }
+    .pill.multi.selected {
+      background: linear-gradient(135deg, #2d9e6b, #1d7a52);
+      box-shadow: 0 2px 12px rgba(45,158,107,0.35);
+    }
+
+    /* Toggle switch */
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px; border-radius: 10px;
+      background: var(--bg-card); border: 1px solid var(--border-color);
+    }
+    .toggle-label { font-size: 13px; font-weight: 500; }
+    .toggle-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+    .toggle-switch {
+      position: relative; width: 40px; height: 22px; cursor: pointer;
+    }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-track {
+      position: absolute; inset: 0; border-radius: 11px;
+      background: var(--border-color); transition: 0.2s;
+    }
+    .toggle-switch input:checked + .toggle-track { background: #7c6af7; }
+    .toggle-thumb {
+      position: absolute; top: 3px; left: 3px;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: white; transition: 0.2s;
+      pointer-events: none;
+    }
+    .toggle-switch input:checked ~ .toggle-thumb { transform: translateX(18px); }
+
+    /* Song name input */
+    .song-input-wrap { position: relative; }
+    .song-input {
+      width: 100%; padding: 10px 14px; border-radius: 10px;
+      border: 1.5px solid var(--border-color); background: var(--bg-card);
+      color: var(--text-color); font-family: inherit; font-size: 13px;
+      box-sizing: border-box; transition: border-color 0.2s;
+    }
+    .song-input:focus { outline: none; border-color: #7c6af7; }
+    .song-input::placeholder { color: var(--text-muted); }
+
+    /* Volume slider */
+    .slider-row { display: flex; align-items: center; gap: 12px; }
+    .slider-row input[type=range] {
+      flex: 1; accent-color: #7c6af7; height: 4px; cursor: pointer;
+    }
+    .slider-val { font-size: 12px; font-weight: 600; color: #7c6af7; min-width: 36px; }
+
+    /* Duration row */
+    .duration-row { display: flex; gap: 10px; }
+    .duration-item {
+      flex: 1; display: flex; flex-direction: column; align-items: center;
+      padding: 12px 8px; border-radius: 10px; border: 1.5px solid var(--border-color);
+      background: var(--bg-card); cursor: pointer; transition: all 0.18s;
+    }
+    .duration-item:hover { border-color: #7c6af7; }
+    .duration-item.selected { border-color: #7c6af7; background: rgba(124,106,247,0.1); }
+    .duration-item .dur-icon { font-size: 22px; margin-bottom: 4px; }
+    .duration-item .dur-label { font-size: 12px; font-weight: 600; }
+    .duration-item .dur-sub { font-size: 11px; color: var(--text-muted); }
+
+    /* Caption style cards */
+    .caption-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .caption-card {
+      padding: 10px 8px; border-radius: 10px; text-align: center;
+      border: 1.5px solid var(--border-color); background: var(--bg-card);
+      cursor: pointer; transition: all 0.18s;
+    }
+    .caption-card:hover { border-color: #7c6af7; }
+    .caption-card.selected { border-color: #7c6af7; background: rgba(124,106,247,0.12); }
+    .caption-card .cap-preview {
+      font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+      margin-bottom: 4px; min-height: 20px; display: flex;
+      align-items: center; justify-content: center;
+    }
+    .caption-card .cap-label { font-size: 10px; color: var(--text-muted); }
+
+    /* Platform badges */
+    .platform-row { display: flex; gap: 10px; }
+    .platform-item {
+      flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px;
+      padding: 12px 6px; border-radius: 10px;
+      border: 1.5px solid var(--border-color); background: var(--bg-card);
+      cursor: pointer; transition: all 0.18s; font-size: 11px; font-weight: 600;
+    }
+    .platform-item:hover { border-color: #7c6af7; }
+    .platform-item.selected { border-color: #7c6af7; background: rgba(124,106,247,0.1); }
+    .platform-item .plat-icon { font-size: 22px; }
+
+    /* Notes */
+    .notes-area {
+      width: 100%; min-height: 64px; padding: 10px 14px; border-radius: 10px;
+      border: 1.5px solid var(--border-color); background: var(--bg-card);
+      color: var(--text-color); font-family: inherit; font-size: 13px;
+      resize: vertical; box-sizing: border-box; transition: border-color 0.2s;
+    }
+    .notes-area:focus { outline: none; border-color: #7c6af7; }
+    .notes-area::placeholder { color: var(--text-muted); }
+  </style>
 </head>
 <body>
   <header class="header">
@@ -23,14 +155,15 @@
 
   <main class="upload-container">
     <div style="text-align: center; margin-bottom: 32px;">
-      <h2 style="font-size: 24px; margin-bottom: 8px;">Create Cinematic Reel highlights</h2>
-      <p style="color: var(--text-muted); font-size: 14px;">Upload your raw vacation/project videos & photos, and let AI sequence the story arc.</p>
+      <h2 style="font-size: 24px; margin-bottom: 8px;">Create Cinematic Reel Highlights</h2>
+      <p style="color: var(--text-muted); font-size: 14px;">Upload your raw videos & photos, then tell the AI exactly what you want.</p>
     </div>
 
-    <section class="panel" style="padding: 24px;">
+    <!-- Step 1: Upload -->
+    <section class="panel" style="padding: 24px; margin-bottom: 20px;">
       <div class="section-label">Step 1</div>
       <h3 class="section-title" style="margin-bottom: 20px;">Upload Videos & Photos</h3>
-      
+
       <div id="drop-zone" class="upload-zone" onclick="document.getElementById('file-input').click()">
         <div class="upload-icon">
           <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -48,43 +181,296 @@
       </div>
 
       <div class="file-list" id="file-list" style="margin-top: 20px; display: flex; flex-direction: column; gap: 10px;"></div>
+    </section>
 
-      <!-- Custom Editing Instructions -->
-      <div id="directives-container" style="margin-top: 20px; text-align: left; display: none;">
-        <label for="directives-input" style="font-weight: 500; font-size: 13px; display: block; margin-bottom: 8px; color: var(--text-color);">
-          🎯 Custom Editing Instructions (Optional):
-        </label>
-        <textarea id="directives-input" placeholder="e.g. 'scenery 7/10', 'focus on birthday girl', 'people 6/10', or standard directives like 'make it look cinematic, start and end with a flight'..." 
-                  style="width: 100%; min-height: 80px; padding: 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-color); font-family: inherit; font-size: 13px; resize: vertical; box-sizing: border-box;"></textarea>
-        
-        <!-- Upload Order Option -->
-        <label style="display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; font-weight: 500; color: var(--text-color); cursor: pointer;">
-          <input type="checkbox" id="upload-order-checkbox" style="width: 16px; height: 16px; cursor: pointer;" />
-          Use uploaded file order (ignore AI story sequencing)
-        </label>
-      </div>
+    <!-- Step 2: Reel Preferences Form -->
+    <section class="panel" id="prefs-panel" style="padding: 24px; display: none;">
+      <div class="section-label">Step 2</div>
+      <h3 class="section-title" style="margin-bottom: 4px;">Tell the AI Your Vibe</h3>
+      <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 4px;">These preferences guide the music, captions, pacing and style of your reel.</p>
 
-      <div style="margin-top: 24px; text-align: center;">
-        <button class="btn btn-glowing" id="btn-analyze" onclick="startAnalysis()" style="width: 100%; display: none; font-size: 14px;">
+      <div class="prefs-form">
+
+
+
+        <!-- 2. Mood / Energy -->
+        <div class="pref-section">
+          <div class="pref-section-title">⚡ Energy / Mood</div>
+          <div class="pill-group" id="mood-group">
+            <div class="pill" data-group="mood" data-val="energetic">⚡ Energetic / Hype</div>
+            <div class="pill" data-group="mood" data-val="chill">😌 Chill / Lofi</div>
+            <div class="pill" data-group="mood" data-val="cinematic">🎥 Cinematic / Epic</div>
+            <div class="pill" data-group="mood" data-val="romantic">💕 Romantic</div>
+            <div class="pill" data-group="mood" data-val="emotional">😢 Emotional / Nostalgic</div>
+            <div class="pill" data-group="mood" data-val="fun">😄 Fun / Playful</div>
+            <div class="pill" data-group="mood" data-val="motivational">💪 Motivational</div>
+            <div class="pill" data-group="mood" data-val="peaceful">🌸 Peaceful / Soft</div>
+          </div>
+        </div>
+
+        <!-- 3. Music -->
+        <div class="pref-section">
+          <div class="pref-section-title">🎵 Music Preferences</div>
+
+          <!-- Lyrical vs Instrumental -->
+          <div class="toggle-row">
+            <div>
+              <div class="toggle-label">Lyrical Song (with vocals)</div>
+              <div class="toggle-sub">OFF = instrumental / background music only</div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="toggle-lyrical" checked onchange="onLyricalToggle()">
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </label>
+          </div>
+
+          <!-- Genre pills (shown for instrumental) -->
+          <div id="genre-pills" style="display:none;">
+            <div class="pill-group" id="genre-group">
+              <div class="pill" data-group="genre" data-val="bollywood">🇮🇳 Bollywood</div>
+              <div class="pill" data-group="genre" data-val="punjabi">🥁 Punjabi</div>
+              <div class="pill" data-group="genre" data-val="lofi">🎧 Lo-fi / Ambient</div>
+              <div class="pill" data-group="genre" data-val="pop">🎤 Pop</div>
+              <div class="pill" data-group="genre" data-val="edm">🎛️ EDM / Electronic</div>
+              <div class="pill" data-group="genre" data-val="classical">🎻 Classical / Orchestral</div>
+              <div class="pill" data-group="genre" data-val="acoustic">🎸 Acoustic / Folk</div>
+            </div>
+          </div>
+
+          <!-- Specific song name (shown for lyrical) -->
+          <div id="song-name-wrap">
+            <div style="font-size: 12px; font-weight: 600; margin-bottom: 6px; color: var(--text-color);">
+              🎵 Song Name <span style="color: var(--text-muted); font-weight: 400;">(leave blank for AI to auto-pick)</span>
+            </div>
+            <div class="song-input-wrap">
+              <input id="song-input" class="song-input" type="text"
+                placeholder="e.g. Namo Namo · Kesariya · Shape of You · Tauba Tauba · any song in any language" />
+            </div>
+            <p style="font-size: 11px; color: var(--text-muted); margin-top: 6px; line-height: 1.5;">
+              💡 Type any short name — AI expands it to the exact song: <em>"namo namo" → Namo Namo Kedarnath Amit Trivedi</em>
+            </p>
+          </div>
+
+          <!-- Music Volume -->
+          <div>
+            <div style="font-size: 12px; font-weight: 500; margin-bottom: 8px; color: var(--text-muted);">Music Volume</div>
+            <div class="slider-row">
+              <span style="font-size: 12px;">🔇</span>
+              <input type="range" id="music-vol" min="0" max="100" value="40" oninput="document.getElementById('vol-val').textContent=this.value+'%'">
+              <span style="font-size: 12px;">🔊</span>
+              <span class="slider-val" id="vol-val">40%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. Target Platform -->
+        <div class="pref-section">
+          <div class="pref-section-title">📱 Target Platform</div>
+          <div class="platform-row" id="platform-group">
+            <div class="platform-item selected" data-group="platform" data-val="reels">
+              <span class="plat-icon">📸</span>
+              <span>Instagram Reels</span>
+              <span style="font-size: 10px; color: var(--text-muted);">9:16 · ≤90s</span>
+            </div>
+            <div class="platform-item" data-group="platform" data-val="shorts">
+              <span class="plat-icon">▶️</span>
+              <span>YouTube Shorts</span>
+              <span style="font-size: 10px; color: var(--text-muted);">9:16 · ≤60s</span>
+            </div>
+            <div class="platform-item" data-group="platform" data-val="tiktok">
+              <span class="plat-icon">🎵</span>
+              <span>TikTok</span>
+              <span style="font-size: 10px; color: var(--text-muted);">9:16 · any</span>
+            </div>
+            <div class="platform-item" data-group="platform" data-val="landscape">
+              <span class="plat-icon">🖥️</span>
+              <span>Landscape</span>
+              <span style="font-size: 10px; color: var(--text-muted);">16:9 · YouTube</span>
+            </div>
+          </div>
+        </div>
+
+
+
+
+
+        <!-- 7. Caption Style -->
+        <div class="pref-section">
+          <div class="pref-section-title">💬 Captions</div>
+
+          <!-- Scope: single vs per-clip -->
+          <div class="toggle-row">
+            <div>
+              <div class="toggle-label">One caption for the entire reel</div>
+              <div class="toggle-sub">ON = your text, top-center on every clip  |  OFF = AI writes per-clip captions at bottom</div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="toggle-single-caption" onchange="onCaptionScopeToggle()">
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </label>
+          </div>
+
+          <!-- Single caption sub-options -->
+          <div id="single-caption-wrap" style="display:none;">
+            <div class="pill-group" style="margin-bottom: 10px;">
+              <div class="pill selected" id="cap-ai-pill" onclick="onSingleCaptionMode('ai')">🤖 Let AI choose</div>
+              <div class="pill" id="cap-custom-pill" onclick="onSingleCaptionMode('custom')">✏️ Custom text</div>
+            </div>
+
+            <!-- Custom text input (only for custom mode) -->
+            <div id="custom-caption-input-wrap" style="display:none;">
+              <input id="single-caption-input" class="song-input"
+                type="text" placeholder="e.g.  Life is short · Travel More  OR  wander | BEYOND" />
+            </div>
+            <p style="font-size: 11px; color: var(--text-muted); margin-top: 6px; line-height: 1.5;">
+              📍 One caption, placed at <strong>top-center</strong> on every clip.
+            </p>
+          </div>
+
+          <!-- Per-clip: style selector (only meaningful when AI writes captions) -->
+          <div id="caption-style-wrap">
+            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">Caption visual style:</div>
+            <div class="caption-cards" id="caption-group">
+              <div class="caption-card selected" data-group="caption" data-val="none">
+                <div class="cap-preview" style="color: var(--text-muted);">—</div>
+                <div class="cap-label">No Captions</div>
+              </div>
+              <div class="caption-card" data-group="caption" data-val="cinematic">
+                <div class="cap-preview" style="background: #111; padding: 4px; border-radius: 4px;">
+                  <span style="font-family: 'Dancing Script', cursive; font-size: 13px; color: #FFFFFF; text-transform: lowercase;">golden</span>
+                  <span style="font-family: 'Playfair Display', serif; font-size: 11px; font-weight: 700; color: #FFD28A; letter-spacing: 0.1em;"> HOUR</span>
+                </div>
+                <div class="cap-label">Cinematic</div>
+              </div>
+              <div class="caption-card" data-group="caption" data-val="minimal">
+                <div class="cap-preview" style="background: #222; padding: 4px; border-radius: 4px;">
+                  <span style="font-family: 'Space Grotesk', sans-serif; font-size: 10px; font-weight: 500; color: #FFFFFF; letter-spacing: 0.05em; text-shadow: 0px 1px 4px rgba(0,0,0,0.8);">CLEAN</span>
+                </div>
+                <div class="cap-label">Minimal</div>
+              </div>
+              <div class="caption-card" data-group="caption" data-val="bold">
+                <div class="cap-preview" style="background: #333; padding: 4px; border-radius: 4px;">
+                  <span style="font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 900; color: #FFFFFF; letter-spacing: -0.02em; text-transform: uppercase; text-shadow: 2px 2px 0px rgba(0,0,0,1);">BOLD</span>
+                </div>
+                <div class="cap-label">Bold Impact</div>
+              </div>
+              <div class="caption-card" data-group="caption" data-val="typewriter">
+                <div class="cap-preview" style="background: #111; padding: 4px; border-radius: 4px;">
+                  <span style="font-family: 'Fira Code', monospace; font-size: 9px; color: #22D3EE; letter-spacing: 0.1em; text-shadow: 0px 0px 4px rgba(34,211,238,0.5);">focus_</span>
+                </div>
+                <div class="cap-label">Typewriter</div>
+              </div>
+              <div class="caption-card" data-group="caption" data-val="hindi">
+                <div class="cap-preview" style="background: #222; padding: 4px; border-radius: 4px;">
+                  <span style="font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 600; color: #FACC15; text-shadow: 0px 2px 6px rgba(0,0,0,0.9);">सफ़र</span>
+                  <span style="font-family: 'Inter', sans-serif; font-size: 10px; font-weight: 600; color: #FFFFFF; text-shadow: 0px 2px 6px rgba(0,0,0,0.9);"> VIBES</span>
+                </div>
+                <div class="cap-label">Hindi Text</div>
+              </div>
+              <div class="caption-card" data-group="caption" data-val="aesthetic">
+                <div class="cap-preview" style="background: #151515; padding: 4px; border-radius: 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;">
+                  <span style="font-family: 'Dancing Script', cursive; font-size: 11px; color: #FFD28A; line-height: 1;">Aesthetic</span>
+                  <span style="font-family: 'Playfair Display', serif; font-size: 10px; font-weight: 600; color: #FFFFFF; letter-spacing: 0.05em; line-height: 1;">SPLIT</span>
+                </div>
+                <div class="cap-label">Aesthetic Split</div>
+              </div>
+              <div class="caption-card" data-group="caption" data-val="handwritten">
+                <div class="cap-preview" style="background: #1f1f1f; padding: 4px; border-radius: 4px; display: flex; align-items: center; justify-content: center;">
+                  <span style="font-family: 'Kalam', cursive; font-size: 12px; color: #FFFFFF; text-shadow: 0px 1px 3px rgba(0,0,0,0.8);">Laila Kalam</span>
+                </div>
+                <div class="cap-label">Handwritten Script</div>
+              </div>
+            </div>
+            
+            <div style="margin-top: 14px; display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: rgba(255,255,255,0.02); border-radius: 6px; border: 1px solid var(--border-color);">
+              <span style="font-size: 11px; color: var(--text-muted); font-weight: 500;">Caption position:</span>
+              <div class="pill-group" id="caption-position-group" style="gap: 4px;">
+                <div class="pill selected" data-group="caption_position" data-val="bottom" style="padding: 4px 10px; font-size: 11px; border-radius: 12px;">⬇️ Bottom</div>
+                <div class="pill" data-group="caption_position" data-val="top" style="padding: 4px 10px; font-size: 11px; border-radius: 12px;">⬆️ Top</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 8. Story Arc -->
+        <div class="pref-section">
+          <div class="pref-section-title">📖 Story Arc</div>
+          <div class="pill-group" id="arc-group">
+            <div class="pill" data-group="arc" data-val="auto">🤖 AI Decides</div>
+            <div class="pill" data-group="arc" data-val="hook build climax">🎢 Hook → Build → Climax</div>
+            <div class="pill" data-group="arc" data-val="journey">🗺️ Journey (start to end)</div>
+            <div class="pill" data-group="arc" data-val="highlight montage">🎬 Best Moments Montage</div>
+            <div class="pill" data-group="arc" data-val="before after">↔️ Before & After</div>
+            <div class="pill" data-group="arc" data-val="slow reveal">🌅 Slow Reveal</div>
+          </div>
+        </div>
+
+        <!-- 9. Use Uploaded Order -->
+        <div class="pref-section">
+          <div class="pref-section-title">🔧 Additional Options</div>
+          <div class="toggle-row">
+            <div>
+              <div class="toggle-label">Use Uploaded File Order</div>
+              <div class="toggle-sub">Ignore AI story sequencing — keep the order you uploaded files in</div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="toggle-order">
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </label>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <div class="toggle-label">Add Voiceover</div>
+              <div class="toggle-sub">AI writes and narrates a short script over the reel</div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="toggle-vo">
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </label>
+          </div>
+        </div>
+
+        <!-- 10. Free-text Notes -->
+        <div class="pref-section">
+          <div class="pref-section-title">📝 Extra Notes to AI (Optional)</div>
+          <textarea id="extra-notes" class="notes-area"
+            placeholder="e.g. 'focus on the birthday girl', 'start with the flight shot', 'make it feel like a movie trailer', 'add a slow-mo feel to pool clips'..."></textarea>
+        </div>
+
+      </div><!-- /prefs-form -->
+
+      <div style="margin-top: 28px;">
+        <button class="btn btn-glowing" id="btn-analyze" onclick="startAnalysis()" style="width: 100%; font-size: 14px;">
           🚀 Start AI Story Director
         </button>
       </div>
-      
-      <div class="log-terminal" id="log-terminal" style="display: none;">Initializing log stream...</div>
+
+      <div class="log-terminal" id="log-terminal" style="display: none; margin-top: 20px;">Initializing log stream...</div>
     </section>
   </main>
 
   <script>
     let uploadedFiles = [];
 
+    // ── Selection state ──
+    const selections = {
+      mood: null, genre: null, platform: 'reels',
+      caption: 'none', caption_position: 'bottom', arc: null
+    };
+
     // Check if files already uploaded
     fetch('/api/files').then(r => r.json()).then(data => {
-      if(data.files && data.files.length > 0) {
+      if (data.files && data.files.length > 0) {
         uploadedFiles = data.files.map(f => ({ name: f, status: 'uploaded' }));
         renderFiles();
       }
     });
 
+    // ── Drag & Drop ──
     const dropZone = document.getElementById('drop-zone');
     dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
     dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
@@ -94,10 +480,8 @@
       for (const file of files) {
         uploadedFiles.push({ name: file.name, status: 'uploading...' });
         renderFiles();
-        
         const fd = new FormData();
         fd.append('file', file);
-        
         try {
           const res = await fetch('/api/upload', { method: 'POST', body: fd });
           const data = await res.json();
@@ -112,19 +496,15 @@
 
     function renderFiles() {
       const list = document.getElementById('file-list');
-      const btn = document.getElementById('btn-analyze');
-      
+      const prefs = document.getElementById('prefs-panel');
       list.innerHTML = uploadedFiles.map(f => `
         <div class="file-item">
           <div style="display: flex; align-items: center; gap: 10px;">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--text-muted)" stroke-width="2" style="opacity:0.7;">
               <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect>
-              <line x1="7" y1="2" x2="7" y2="22"></line>
-              <line x1="17" y1="2" x2="17" y2="22"></line>
-              <line x1="2" y1="12" x2="22" y2="12"></line>
-              <line x1="2" y1="7" x2="7" y2="7"></line>
-              <line x1="2" y1="17" x2="7" y2="17"></line>
-              <line x1="17" y1="17" x2="22" y2="17"></line>
+              <line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line>
+              <line x1="2" y1="12" x2="22" y2="12"></line><line x1="2" y1="7" x2="7" y2="7"></line>
+              <line x1="2" y1="17" x2="7" y2="17"></line><line x1="17" y1="17" x2="22" y2="17"></line>
               <line x1="17" y1="7" x2="22" y2="7"></line>
             </svg>
             <span class="file-item-name">${f.name}</span>
@@ -132,33 +512,114 @@
           <span class="file-item-status">${f.status}</span>
         </div>
       `).join('');
-      
       const allDone = uploadedFiles.length > 0 && uploadedFiles.every(f => f.status.includes('Ready') || f.status === 'uploaded');
-      btn.style.display = allDone ? 'block' : 'none';
-      document.getElementById('directives-container').style.display = allDone ? 'block' : 'none';
+      prefs.style.display = allDone ? 'block' : 'none';
+    }
+
+    // ── Pill / card selection ──
+    document.querySelectorAll('.pill, .caption-card, .duration-item, .platform-item').forEach(el => {
+      el.addEventListener('click', () => {
+        const group = el.dataset.group;
+        const val = el.dataset.val;
+        // Single-select: deselect others in same group
+        document.querySelectorAll(`[data-group="${group}"]`).forEach(x => x.classList.remove('selected'));
+        el.classList.add('selected');
+        selections[group] = val;
+      });
+    });
+
+    // ── Lyrical toggle ──
+    function onLyricalToggle() {
+      const isLyrical = document.getElementById('toggle-lyrical').checked;
+      document.getElementById('song-name-wrap').style.display = isLyrical ? 'block' : 'none';
+      document.getElementById('genre-pills').style.display = isLyrical ? 'none' : 'flex';
+    }
+
+    // ── Caption scope toggle ──
+    let singleCaptionMode = 'ai'; // 'ai' or 'custom'
+    function updateStyleVisibility() {
+      const isSingle = document.getElementById('toggle-single-caption').checked;
+      const styleWrap = document.getElementById('caption-style-wrap');
+      if (isSingle && singleCaptionMode === 'custom') {
+        styleWrap.style.display = 'none';
+      } else {
+        styleWrap.style.display = 'block';
+      }
+    }
+
+    function onCaptionScopeToggle() {
+      const isSingle = document.getElementById('toggle-single-caption').checked;
+      document.getElementById('single-caption-wrap').style.display = isSingle ? 'block' : 'none';
+      updateStyleVisibility();
+    }
+    function onSingleCaptionMode(mode) {
+      singleCaptionMode = mode;
+      document.getElementById('cap-ai-pill').classList.toggle('selected', mode === 'ai');
+      document.getElementById('cap-custom-pill').classList.toggle('selected', mode === 'custom');
+      document.getElementById('custom-caption-input-wrap').style.display = mode === 'custom' ? 'block' : 'none';
+      updateStyleVisibility();
+    }
+
+    // ── Build structured directives string ──
+    function buildDirectives() {
+      const parts = [];
+      const isLyrical = document.getElementById('toggle-lyrical').checked;
+      const songName = document.getElementById('song-input').value.trim();
+      const notes = document.getElementById('extra-notes').value.trim();
+      const vol = document.getElementById('music-vol').value;
+      const useOrder = document.getElementById('toggle-order').checked;
+      const vo = document.getElementById('toggle-vo').checked;
+
+      if (selections.mood) parts.push(`Mood/energy: ${selections.mood}`);
+
+      // Music
+      if (isLyrical) {
+        parts.push('Music type: lyrical song with vocals');
+        if (songName) parts.push(`Specific song: ${songName}`);
+      } else {
+        parts.push('Music type: instrumental background music');
+        if (selections.genre) parts.push(`Music genre: ${selections.genre}`);
+      }
+      parts.push(`Music volume: ${vol}%`);
+
+      if (selections.platform) parts.push(`Target platform: ${selections.platform}`);
+      if (selections.caption) parts.push(`Caption style: ${selections.caption}`);
+      if (selections.caption_position) parts.push(`Caption position: ${selections.caption_position}`);
+      // Caption scope
+      const isSingleCaption = document.getElementById('toggle-single-caption').checked;
+      if (isSingleCaption) {
+        parts.push('Caption scope: single (same caption on all clips)');
+        if (singleCaptionMode === 'custom') {
+          const customText = document.getElementById('single-caption-input').value.trim();
+          if (customText) parts.push(`Caption text: ${customText}`);
+          parts.push('Caption source: custom');
+        } else {
+          parts.push('Caption source: ai (write one creative caption for the whole reel, place at top-center)');
+        }
+      } else {
+        parts.push('Caption scope: per-clip (AI writes different caption for each clip)');
+      }
+      if (selections.arc && selections.arc !== 'auto') parts.push(`Story arc: ${selections.arc}`);
+      if (vo) parts.push('Add voiceover narration: yes');
+      if (notes) parts.push(`Extra notes: ${notes}`);
+
+      return parts.join('\n');
     }
 
     async function startAnalysis() {
-      const directives = document.getElementById('directives-input').value;
-      const useUploadedOrder = document.getElementById('upload-order-checkbox').checked;
+      const directives = buildDirectives();
+      const useUploadedOrder = document.getElementById('toggle-order').checked;
 
       document.getElementById('btn-analyze').style.display = 'none';
-      document.getElementById('directives-container').style.display = 'none';
-      document.getElementById('drop-zone').style.display = 'none';
+      document.getElementById('prefs-panel').querySelector('.prefs-form').style.display = 'none';
       document.getElementById('log-terminal').style.display = 'block';
 
-      const res = await fetch('/api/analyze', { 
+      const res = await fetch('/api/analyze', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ 
-          directives: directives,
-          use_uploaded_order: useUploadedOrder
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ directives, use_uploaded_order: useUploadedOrder })
       });
       const data = await res.json();
-      
       if (!data.ok) {
         document.getElementById('log-terminal').textContent = `❌ Error: ${data.error}`;
         return;
@@ -167,20 +628,14 @@
       const poll = setInterval(async () => {
         const rStatus = await fetch('/api/analyze_status');
         const s = await rStatus.json();
-        
         const rLogs = await fetch('/api/logs');
         const l = await rLogs.json();
-        
         const terminal = document.getElementById('log-terminal');
-        
         if (l.logs) {
-           const isScrolledToBottom = terminal.scrollHeight - terminal.clientHeight <= terminal.scrollTop + 50;
-           terminal.textContent = l.logs;
-           if (isScrolledToBottom) {
-             terminal.scrollTop = terminal.scrollHeight;
-           }
+          const isScrolledToBottom = terminal.scrollHeight - terminal.clientHeight <= terminal.scrollTop + 50;
+          terminal.textContent = l.logs;
+          if (isScrolledToBottom) terminal.scrollTop = terminal.scrollHeight;
         }
-        
         if (s.done) {
           clearInterval(poll);
           terminal.textContent += '\n\n✅ Analysis complete! Redirecting to Reel Editor...';
@@ -189,24 +644,18 @@
         } else if (s.error) {
           clearInterval(poll);
           terminal.textContent += `\n\n❌ Analysis failed: ${s.error}`;
-          terminal.scrollTop = terminal.scrollHeight;
           document.getElementById('btn-analyze').style.display = 'block';
         }
       }, 1000);
     }
 
     async function resetWorkspace() {
-      if (!confirm("Are you sure you want to reset the workspace? This will delete all uploaded videos, clips, frames, cached AI analysis, and final reels.")) {
-        return;
-      }
+      if (!confirm("Are you sure you want to reset the workspace? This will delete all uploaded videos, clips, frames, cached AI analysis, and final reels.")) return;
       try {
         const res = await fetch('/api/reset', { method: 'POST' });
         const data = await res.json();
-        if (data.ok) {
-          window.location.href = '/';
-        } else {
-          alert("Error resetting workspace: " + data.error);
-        }
+        if (data.ok) window.location.href = '/';
+        else alert("Error resetting workspace: " + data.error);
       } catch (e) {
         alert("Error resetting workspace: " + e);
       }

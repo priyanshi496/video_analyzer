@@ -1,5 +1,12 @@
 import React from "react";
 import { loadFont } from "@remotion/google-fonts/SpaceGrotesk";
+import { loadFont as loadPlayfair } from "@remotion/google-fonts/PlayfairDisplay";
+import { loadFont as loadDancingScript } from "@remotion/google-fonts/DancingScript";
+import { loadFont as loadInter } from "@remotion/google-fonts/Inter";
+import { loadFont as loadNotoSansDevanagari } from "@remotion/google-fonts/NotoSansDevanagari";
+import { loadFont as loadCourierPrime } from "@remotion/google-fonts/CourierPrime";
+import { loadFont as loadKalam } from "@remotion/google-fonts/Kalam";
+import { loadFont as loadLaila } from "@remotion/google-fonts/Laila";
 import {
   AbsoluteFill,
   Audio,
@@ -11,6 +18,7 @@ import {
   staticFile,
   useCurrentFrame,
   useVideoConfig,
+  Img,
 } from "remotion";
 
 import { resolveAsset } from "./resolveAsset";
@@ -36,9 +44,9 @@ function resolveScenes(props: CinematicRendererProps): CinematicScene[] {
     const duration = cut.out_seconds - cut.in_seconds;
     const transitionDuration = cut.transition_duration || 0;
     const start = currentTimelineSeconds;
-    
+
     const fadeOutFrames = transitionDuration > 0 ? Math.round(transitionDuration * FPS) : 10;
-    
+
     const prevCut = i > 0 ? cuts[i - 1] : null;
     const prevTransitionDuration = prevCut ? (prevCut.transition_duration || 0) : 0;
     const fadeInFrames = prevTransitionDuration > 0 ? Math.round(prevTransitionDuration * FPS) : 10;
@@ -53,6 +61,10 @@ function resolveScenes(props: CinematicRendererProps): CinematicScene[] {
       trimAfterSeconds: undefined,
       fadeInFrames,
       fadeOutFrames,
+      captionText: (cut as any).captionText,
+      captionStyle: (cut as any).captionStyle,
+      captionPosition: (cut as any).captionPosition,
+      captionColor: (cut as any).captionColor,
     });
 
     currentTimelineSeconds += duration - transitionDuration;
@@ -60,9 +72,49 @@ function resolveScenes(props: CinematicRendererProps): CinematicScene[] {
   return mapped;
 }
 
-const { fontFamily } = loadFont("normal", {
+const { fontFamily: playfairFont } = loadPlayfair("normal", {
+  weights: ["400", "700"],
+  subsets: ["latin"],
+});
+
+const { fontFamily: playfairItalic } = loadPlayfair("italic", {
+  weights: ["400"],
+  subsets: ["latin"],
+});
+
+const { fontFamily: dancingFont } = loadDancingScript("normal", {
+  weights: ["400", "700"],
+  subsets: ["latin"],
+});
+
+const { fontFamily: spaceGroteskFont } = loadFont("normal", {
   weights: ["400", "500", "700"],
   subsets: ["latin"],
+});
+
+const { fontFamily: interFont } = loadInter("normal", {
+  weights: ["400", "600"],
+  subsets: ["latin"],
+});
+
+const { fontFamily: notoSansDevanagariFont } = loadNotoSansDevanagari("normal", {
+  weights: ["400", "500", "700"],
+  subsets: ["devanagari", "latin"],
+});
+
+const { fontFamily: courierPrimeFont } = loadCourierPrime("normal", {
+  weights: ["400", "700"],
+  subsets: ["latin"],
+});
+
+const { fontFamily: kalamFont } = loadKalam("normal", {
+  weights: ["400", "700"],
+  subsets: ["devanagari", "latin"],
+});
+
+const { fontFamily: lailaFont } = loadLaila("normal", {
+  weights: ["400", "500", "700"],
+  subsets: ["devanagari", "latin"],
 });
 
 const toneGradient = (tone: CinematicTone) => {
@@ -81,30 +133,33 @@ const toneGradient = (tone: CinematicTone) => {
 
 const SceneVideo: React.FC<{ scene: CinematicVideoScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
-  const { durationInFrames, fps } = useVideoConfig();
+  const { fps } = useVideoConfig();
+  const sceneDurationInFrames = Math.round(scene.durationSeconds * fps);
   const fadeInFrames = scene.fadeInFrames ?? 10;
   const fadeOutFrames = scene.fadeOutFrames ?? 10;
-  const fadeOutStart = Math.max(fadeInFrames, durationInFrames - fadeOutFrames);
+  const fadeOutStart = Math.max(fadeInFrames, sceneDurationInFrames - fadeOutFrames);
   const fadeInOpacity =
-    fadeInFrames === 0
+    fadeInFrames <= 0
       ? 1
       : interpolate(frame, [0, fadeInFrames], [0, 1], {
-          extrapolateLeft: "clamp",
-          extrapolateRight: "clamp",
-        });
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+      });
   const fadeOutOpacity =
-    fadeOutFrames === 0
+    fadeOutFrames <= 0 || fadeOutStart >= sceneDurationInFrames
       ? 1
-      : interpolate(frame, [fadeOutStart, durationInFrames], [1, 0], {
-          extrapolateLeft: "clamp",
-          extrapolateRight: "clamp",
-        });
+      : interpolate(frame, [fadeOutStart, sceneDurationInFrames], [1, 0], {
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+      });
   const opacity = Math.min(fadeInOpacity, fadeOutOpacity);
 
-  const scale = interpolate(frame, [0, durationInFrames], [1.015, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
+  const scale = sceneDurationInFrames <= 0
+    ? 1.015
+    : interpolate(frame, [0, sceneDurationInFrames], [1.015, 1], {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    });
 
   const trimBefore =
     scene.trimBeforeSeconds !== undefined
@@ -115,10 +170,53 @@ const SceneVideo: React.FC<{ scene: CinematicVideoScene }> = ({ scene }) => {
       ? Math.round(scene.trimAfterSeconds * fps)
       : undefined;
 
+  const isImage = scene.src.match(/\.(jpeg|jpg|png|gif|webp)$/i);
+
   return (
     <AbsoluteFill style={{ backgroundColor: "#020407", opacity }}>
       {/* Background blurred video to fill aspect ratio gaps */}
       <AbsoluteFill style={{ overflow: "hidden" }}>
+        {isImage ? (
+          <Img
+            src={resolveAsset(scene.src)}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              filter: "blur(20px) brightness(0.4) saturate(1.2)",
+              transform: "scale(1.1)", // prevent white border artifacts from blur
+            }}
+          />
+        ) : (
+          <OffthreadVideo
+            muted
+            src={resolveAsset(scene.src)}
+            trimBefore={trimBefore}
+            trimAfter={trimAfter}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              filter: "blur(20px) brightness(0.4) saturate(1.2)",
+              transform: "scale(1.1)", // prevent white border artifacts from blur
+            }}
+          />
+        )}
+      </AbsoluteFill>
+
+      {/* Foreground contained video */}
+      {isImage ? (
+        <Img
+          src={resolveAsset(scene.src)}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "contain",
+            transform: `scale(${scale})`,
+            filter: scene.filter ?? "contrast(1.06) saturate(0.88) brightness(0.92)",
+          }}
+        />
+      ) : (
         <OffthreadVideo
           muted
           src={resolveAsset(scene.src)}
@@ -127,28 +225,12 @@ const SceneVideo: React.FC<{ scene: CinematicVideoScene }> = ({ scene }) => {
           style={{
             width: "100%",
             height: "100%",
-            objectFit: "cover",
-            filter: "blur(20px) brightness(0.4) saturate(1.2)",
-            transform: "scale(1.1)", // prevent white border artifacts from blur
+            objectFit: "contain",
+            transform: `scale(${scale})`,
+            filter: scene.filter ?? "contrast(1.06) saturate(0.88) brightness(0.92)",
           }}
         />
-      </AbsoluteFill>
-
-      {/* Foreground contained video */}
-      <OffthreadVideo
-        muted
-        src={resolveAsset(scene.src)}
-        trimBefore={trimBefore}
-        trimAfter={trimAfter}
-        style={{
-          width: "100%",
-          height: "100%",
-          objectFit: "contain",
-          transform: `scale(${scale})`,
-          filter:
-            scene.filter ?? "contrast(1.06) saturate(0.88) brightness(0.92)",
-        }}
-      />
+      )}
       <AbsoluteFill
         style={{
           background: toneGradient(scene.tone ?? "cold"),
@@ -171,6 +253,208 @@ const SceneVideo: React.FC<{ scene: CinematicVideoScene }> = ({ scene }) => {
           pointerEvents: "none",
         }}
       />
+      {(scene as any).captionText && (scene as any).captionStyle !== "none" ? (
+        <AbsoluteFill
+          key={`${(scene as any).captionStyle}_${(scene as any).captionPosition}_${(scene as any).captionText}_${(scene as any).captionColor || ''}`}
+          style={{
+            justifyContent: (scene as any).captionPosition === "top" ? "flex-start" : "flex-end",
+            alignItems: "center",
+            paddingTop: (scene as any).captionPosition === "top" ? "15%" : "0",
+            paddingBottom: (scene as any).captionPosition !== "top" ? "12%" : "0",
+          }}
+        >
+          <div
+            style={{
+              textAlign: "center",
+              maxWidth: "90%",
+              lineHeight: 1.1,
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+              textShadow: "0px 6px 18px rgba(0,0,0,0.85), 0px 0px 4px rgba(0,0,0,0.5)",
+            }}
+          >
+            {(scene as any).captionText.split("|").map((rawLine: string, i: number) => {
+              const line = rawLine.trim();
+              const isUppercase = line.toUpperCase() === line && /[A-Z]/.test(line);
+              const isHindi = /[\u0900-\u097F]/.test(line);
+              let renderText = line;
+              
+              let fontToUse = playfairFont;
+              let colorToUse = isUppercase ? "#FFD28A" : "#FFFFFF";
+              let fontWeight: number | string = isUppercase ? 700 : 400;
+              let letterSpacing = isUppercase ? "0.10em" : "0.02em";
+              let textTransform: any = isUppercase ? "uppercase" : "none";
+              let textShadow = "0px 6px 18px rgba(0,0,0,0.85), 0px 0px 4px rgba(0,0,0,0.5)";
+              let textStroke = "none";
+              let fontSize = isUppercase ? 72 : 64;
+
+              const styleType = (scene as any).captionStyle || "cinematic";
+
+              if (styleType === "minimal" || styleType === "clean") {
+                if (isHindi) {
+                  fontToUse = notoSansDevanagariFont;
+                  fontSize = 62;
+                } else {
+                  fontToUse = interFont;
+                  fontSize = 56;
+                }
+                fontWeight = 500;
+                colorToUse = "#FFFFFF";
+                letterSpacing = "0.03em";
+                textShadow = "0px 2px 8px rgba(0,0,0,0.5)";
+              } else if (styleType === "bold") {
+                if (isHindi) {
+                  fontToUse = notoSansDevanagariFont;
+                  fontSize = 76;
+                } else {
+                  fontToUse = spaceGroteskFont;
+                  fontSize = 84;
+                  textTransform = "uppercase";
+                }
+                fontWeight = 900;
+                colorToUse = "#FFFFFF";
+                letterSpacing = "-0.02em";
+                textShadow = "4px 4px 0px rgba(0,0,0,1)";
+              } else if (styleType === "hindi") {
+                if (isHindi) {
+                  // Clean sans-serif for Devanagari — legible at any size
+                  fontToUse = notoSansDevanagariFont;
+                  fontWeight = 600;
+                  colorToUse = "#FFFFFF";
+                  letterSpacing = "0.01em";
+                  textStroke = "none";
+                  textShadow = "0px 3px 16px rgba(0,0,0,0.7)";
+                  fontSize = 70;
+                } else {
+                  // Clean, elegant Playfair serif for Latin/Hinglish lines in hindi-style captions
+                  fontToUse = i % 2 === 1 ? playfairItalic : playfairFont;
+                  fontWeight = 600;
+                  colorToUse = "#FFFFFF";
+                  letterSpacing = "0.03em";
+                  textStroke = "none";
+                  textShadow = "0px 4px 15px rgba(0,0,0,0.8)";
+                  fontSize = 66;
+                }
+              } else if (styleType === "aesthetic") {
+                if (isHindi) {
+                  fontToUse = lailaFont;
+                  fontSize = 70;
+                  colorToUse = "#FFFFFF";
+                  fontWeight = 500;
+                  letterSpacing = "0.03em";
+                  textShadow = "0px 3px 12px rgba(0,0,0,0.6)";
+                } else {
+                  if (i % 2 === 0) {
+                    fontToUse = dancingFont;
+                    fontSize = 78;
+                    colorToUse = "#FFFFFF";
+                    fontWeight = 500;
+                    textTransform = "lowercase";
+                    letterSpacing = "0.02em";
+                    textShadow = "0px 4px 12px rgba(0,0,0,0.5)";
+                  } else {
+                    fontToUse = playfairFont;
+                    fontSize = 80;
+                    colorToUse = "#FFD28A";
+                    fontWeight = 700;
+                    textTransform = "uppercase";
+                    letterSpacing = "0.08em";
+                    textShadow = "0px 4px 15px rgba(0,0,0,0.8)";
+                  }
+                }
+              } else if (styleType === "handwritten") {
+                if (isHindi) {
+                  fontToUse = lailaFont;
+                  fontSize = 72;
+                  fontWeight = 500;
+                  colorToUse = "#FFFFFF";
+                  letterSpacing = "0.02em";
+                  textShadow = "0px 3px 12px rgba(0,0,0,0.6)";
+                } else {
+                  fontToUse = kalamFont;
+                  fontSize = 70;
+                  fontWeight = 400;
+                  colorToUse = "#FFFFFF";
+                  letterSpacing = "0.02em";
+                  textShadow = "0px 3px 12px rgba(0,0,0,0.6)";
+                }
+              } else if (styleType === "typewriter") {
+                if (isHindi) {
+                  fontToUse = notoSansDevanagariFont;
+                } else {
+                  fontToUse = courierPrimeFont;
+                }
+                fontWeight = 400;
+                colorToUse = "#22D3EE"; // Cyan
+                letterSpacing = "0.1em";
+                textShadow = "0px 0px 8px rgba(34,211,238,0.5)";
+                fontSize = 54;
+              } else {
+                // Default cinematic — elegant serif styling for Latin/Hinglish, clean Noto for Devanagari
+                if (isHindi) {
+                  // Noto Sans Devanagari: modern, clean, highly legible
+                  fontToUse = notoSansDevanagariFont;
+                  fontWeight = 600;
+                  colorToUse = "#FFFFFF"; // Clean white
+                  letterSpacing = "0.01em";
+                  fontSize = 68;
+                } else {
+                  // Latin/Hinglish text: elegant Playfair Display
+                  if (i === 0) {
+                    // First line: Warm, elegant serif (Bold)
+                    fontToUse = playfairFont;
+                    fontWeight = 700;
+                    colorToUse = "#FFD28A"; // Warm golden wheat
+                    letterSpacing = "0.04em";
+                    fontSize = 72;
+                  } else {
+                    // Subtitle/second line: Elegant Italic serif
+                    fontToUse = playfairItalic;
+                    fontWeight = 400;
+                    colorToUse = "rgba(255,255,255,0.92)"; // Clean soft white
+                    letterSpacing = "0.02em";
+                    fontSize = 64;
+                  }
+                }
+              }
+              
+              const linesCount = (scene as any).captionText.split("|").length;
+              const lineCountScale = linesCount >= 4 ? 0.7 : linesCount === 3 ? 0.82 : 1.0;
+              
+              const finalIsUppercase = isUppercase || textTransform === "uppercase";
+              const charCount = line.length;
+              const threshold = finalIsUppercase ? 15 : 22;
+              const lengthScale = charCount > threshold ? Math.max(0.55, threshold / charCount) : 1.0;
+              
+              fontSize = Math.round(fontSize * lineCountScale * lengthScale);
+              
+              if ((scene as any).captionColor) {
+                colorToUse = (scene as any).captionColor;
+              }
+              
+              return (
+                <div
+                  key={i}
+                  style={{
+                    fontFamily: `${fontToUse}, "Noto Sans", "Segoe UI", system-ui, sans-serif`,
+                    fontWeight: fontWeight,
+                    fontSize: fontSize,
+                    color: colorToUse,
+                    letterSpacing: letterSpacing,
+                    textTransform: textTransform,
+                    textShadow: textShadow,
+                    WebkitTextStroke: textStroke,
+                    wordWrap: "break-word",
+                  }}
+                >
+                  {renderText}
+                </div>
+              );
+            })}
+          </div>
+        </AbsoluteFill>
+      ) : null}
     </AbsoluteFill>
   );
 };
@@ -222,6 +506,7 @@ const SignalTexture: React.FC<{
 
 const TitleCard: React.FC<{
   text: string;
+  durationSeconds: number;
   accent: string;
   intensity: number;
   titleFontSize: number;
@@ -233,6 +518,7 @@ const TitleCard: React.FC<{
   variant?: "plate" | "overlay";
 }> = ({
   text,
+  durationSeconds,
   accent,
   intensity,
   titleFontSize,
@@ -243,208 +529,213 @@ const TitleCard: React.FC<{
   backgroundTrimAfterSeconds,
   variant = "plate",
 }) => {
-  const frame = useCurrentFrame();
-  const { fps, durationInFrames } = useVideoConfig();
+    const frame = useCurrentFrame();
+    const { fps } = useVideoConfig();
+    const sceneDurationInFrames = Math.round(durationSeconds * fps);
 
-  const container = spring({
-    fps,
-    frame,
-    config: { damping: 22, stiffness: 80 },
-  });
+    const container = spring({
+      fps,
+      frame,
+      config: { damping: 22, stiffness: 80 },
+    });
 
-  const exit = interpolate(
-    frame,
-    [durationInFrames - 14, durationInFrames],
-    [1, 0],
-    { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
-  );
+    const exit = sceneDurationInFrames <= 14
+      ? 1
+      : interpolate(
+        frame,
+        [sceneDurationInFrames - 14, sceneDurationInFrames],
+        [1, 0],
+        { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
+      );
 
-  // Split by newlines first (each line rendered in its own block),
-  // then word-stagger inside each line. This preserves intentional
-  // \n separators (e.g. "TITLE 1\nTITLE 2") that the old whitespace
-  // regex was collapsing into a single space.
-  const lines = text.split(/\r?\n/);
-  const staggerFrames = 3;
-  const wordFadeFrames = 14;
+    // Split by newlines first (each line rendered in its own block),
+    // then word-stagger inside each line. This preserves intentional
+    // \n separators (e.g. "TITLE 1\nTITLE 2") that the old whitespace
+    // regex was collapsing into a single space.
+    const lines = text.split(/\r?\n/);
+    const staggerFrames = 3;
+    const wordFadeFrames = 14;
 
-  const lineGrow = interpolate(frame, [0, 22], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-  const lineExit = exit;
-  const flareOpacity =
-    0.22 + Math.max(0, Math.sin(frame * 0.09)) * 0.18 * intensity;
+    const lineGrow = interpolate(frame, [0, 22], [0, 1], {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    });
+    const lineExit = exit;
+    const flareOpacity =
+      0.22 + Math.max(0, Math.sin(frame * 0.09)) * 0.18 * intensity;
 
-  const bgScale = interpolate(frame, [0, durationInFrames], [1.04, 1.1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
+    const bgScale = sceneDurationInFrames <= 0
+      ? 1.04
+      : interpolate(frame, [0, sceneDurationInFrames], [1.04, 1.1], {
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+      });
 
-  const bgTrimBefore =
-    backgroundTrimBeforeSeconds !== undefined
-      ? Math.round(backgroundTrimBeforeSeconds * fps)
-      : undefined;
-  const bgTrimAfter =
-    backgroundTrimAfterSeconds !== undefined
-      ? Math.round(backgroundTrimAfterSeconds * fps)
-      : undefined;
+    const bgTrimBefore =
+      backgroundTrimBeforeSeconds !== undefined
+        ? Math.round(backgroundTrimBeforeSeconds * fps)
+        : undefined;
+    const bgTrimAfter =
+      backgroundTrimAfterSeconds !== undefined
+        ? Math.round(backgroundTrimAfterSeconds * fps)
+        : undefined;
 
-  const plateBg =
-    variant === "overlay"
-      ? "transparent"
-      : "radial-gradient(ellipse at 50% 50%, rgba(8,14,22,0.78) 0%, rgba(2,4,8,0.92) 58%, rgba(0,0,0,1) 100%)";
+    const plateBg =
+      variant === "overlay"
+        ? "transparent"
+        : "radial-gradient(ellipse at 50% 50%, rgba(8,14,22,0.78) 0%, rgba(2,4,8,0.92) 58%, rgba(0,0,0,1) 100%)";
 
-  return (
-    <AbsoluteFill
-      style={{
-        background: "#000",
-        justifyContent: "center",
-        alignItems: "center",
-      }}
-    >
-      {backgroundSrc ? (
-        <>
-          <AbsoluteFill style={{ transform: `scale(${bgScale})`, opacity: 0.62 }}>
-            <OffthreadVideo
-              muted
-              src={resolveAsset(backgroundSrc)}
-              trimBefore={bgTrimBefore}
-              trimAfter={bgTrimAfter}
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-                filter: "contrast(1.08) saturate(0.55) brightness(0.55) blur(4px)",
-              }}
-            />
-          </AbsoluteFill>
-          <AbsoluteFill
-            style={{
-              background:
-                "linear-gradient(180deg, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0.35) 40%, rgba(0,0,0,0.35) 60%, rgba(0,0,0,0.78) 100%)",
-            }}
-          />
-        </>
-      ) : null}
-
+    return (
       <AbsoluteFill
         style={{
-          background: plateBg,
-        }}
-      />
-
-      <SignalTexture
-        accent={accent}
-        intensity={intensity * 0.7}
-        lineCount={signalLineCount}
-      />
-
-      {/* Top accent line — grows from center outwards */}
-      <div
-        style={{
-          position: "absolute",
-          width: 1100 * lineGrow,
-          height: 1,
-          background: accent,
-          boxShadow: `0 0 24px ${accent}`,
-          opacity: flareOpacity * lineExit,
-          transform: "translateY(-118px)",
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          width: 1100 * lineGrow,
-          height: 1,
-          background: accent,
-          boxShadow: `0 0 24px ${accent}`,
-          opacity: flareOpacity * 0.75 * lineExit,
-          transform: "translateY(118px)",
-        }}
-      />
-
-      {/* Word-stagger text reveal */}
-      <div
-        style={{
-          opacity: exit,
-          width: titleWidth,
-          textAlign: "center",
-          fontFamily,
-          fontWeight: 500,
-          fontSize: titleFontSize,
-          lineHeight: 1.12,
-          letterSpacing: "0.16em",
-          color: "#f6f4ee",
-          textTransform: "uppercase",
-          textShadow: "0 0 34px rgba(255,255,255,0.10), 0 0 2px rgba(0,0,0,0.8)",
+          background: "#000",
+          justifyContent: "center",
+          alignItems: "center",
         }}
       >
-        {(() => {
-          let wordCounter = 0;
-          return lines.map((line, lineIdx) => {
-            const tokens = line.split(/(\s+)/).filter((w) => w.length > 0);
-            return (
-              <div key={lineIdx} style={{ display: "block" }}>
-                {tokens.map((w, ti) => {
-                  if (/^\s+$/.test(w)) {
-                    return <span key={ti}>&nbsp;</span>;
-                  }
-                  const startFrame = wordCounter * staggerFrames;
-                  wordCounter += 1;
-                  const wordOpacity = interpolate(
-                    frame,
-                    [startFrame, startFrame + wordFadeFrames],
-                    [0, 1],
-                    { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
-                  );
-                  const blur = interpolate(
-                    frame,
-                    [startFrame, startFrame + wordFadeFrames],
-                    [6, 0],
-                    { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
-                  );
-                  const ty = interpolate(
-                    frame,
-                    [startFrame, startFrame + wordFadeFrames],
-                    [14, 0],
-                    { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
-                  );
-                  return (
-                    <span
-                      key={ti}
-                      style={{
-                        display: "inline-block",
-                        opacity: wordOpacity,
-                        filter: `blur(${blur}px)`,
-                        transform: `translateY(${ty}px)`,
-                      }}
-                    >
-                      {w}
-                    </span>
-                  );
-                })}
-              </div>
-            );
-          });
-        })()}
-      </div>
+        {backgroundSrc ? (
+          <>
+            <AbsoluteFill style={{ transform: `scale(${bgScale})`, opacity: 0.62 }}>
+              <OffthreadVideo
+                muted
+                src={resolveAsset(backgroundSrc)}
+                trimBefore={bgTrimBefore}
+                trimAfter={bgTrimAfter}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  filter: "contrast(1.08) saturate(0.55) brightness(0.55) blur(4px)",
+                }}
+              />
+            </AbsoluteFill>
+            <AbsoluteFill
+              style={{
+                background:
+                  "linear-gradient(180deg, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0.35) 40%, rgba(0,0,0,0.35) 60%, rgba(0,0,0,0.78) 100%)",
+              }}
+            />
+          </>
+        ) : null}
 
-      {/* Subtle accent dot centered under text */}
-      <div
-        style={{
-          position: "absolute",
-          width: 6,
-          height: 6,
-          borderRadius: "50%",
-          background: accent,
-          boxShadow: `0 0 18px ${accent}`,
-          opacity: 0.55 * container * lineExit,
-          transform: "translateY(172px)",
-        }}
-      />
-    </AbsoluteFill>
-  );
-};
+        <AbsoluteFill
+          style={{
+            background: plateBg,
+          }}
+        />
+
+        <SignalTexture
+          accent={accent}
+          intensity={intensity * 0.7}
+          lineCount={signalLineCount}
+        />
+
+        {/* Top accent line — grows from center outwards */}
+        <div
+          style={{
+            position: "absolute",
+            width: 1100 * lineGrow,
+            height: 1,
+            background: accent,
+            boxShadow: `0 0 24px ${accent}`,
+            opacity: flareOpacity * lineExit,
+            transform: "translateY(-118px)",
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            width: 1100 * lineGrow,
+            height: 1,
+            background: accent,
+            boxShadow: `0 0 24px ${accent}`,
+            opacity: flareOpacity * 0.75 * lineExit,
+            transform: "translateY(118px)",
+          }}
+        />
+
+        {/* Word-stagger text reveal */}
+        <div
+          style={{
+            opacity: exit,
+            width: titleWidth,
+            textAlign: "center",
+            fontFamily: spaceGroteskFont,
+            fontWeight: 500,
+            fontSize: titleFontSize,
+            lineHeight: 1.12,
+            letterSpacing: "0.16em",
+            color: "#f6f4ee",
+            textTransform: "uppercase",
+            textShadow: "0 0 34px rgba(255,255,255,0.10), 0 0 2px rgba(0,0,0,0.8)",
+          }}
+        >
+          {(() => {
+            let wordCounter = 0;
+            return lines.map((line, lineIdx) => {
+              const tokens = line.split(/(\s+)/).filter((w) => w.length > 0);
+              return (
+                <div key={lineIdx} style={{ display: "block" }}>
+                  {tokens.map((w, ti) => {
+                    if (/^\s+$/.test(w)) {
+                      return <span key={ti}>&nbsp;</span>;
+                    }
+                    const startFrame = wordCounter * staggerFrames;
+                    wordCounter += 1;
+                    const wordOpacity = interpolate(
+                      frame,
+                      [startFrame, startFrame + wordFadeFrames],
+                      [0, 1],
+                      { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
+                    );
+                    const blur = interpolate(
+                      frame,
+                      [startFrame, startFrame + wordFadeFrames],
+                      [6, 0],
+                      { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
+                    );
+                    const ty = interpolate(
+                      frame,
+                      [startFrame, startFrame + wordFadeFrames],
+                      [14, 0],
+                      { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
+                    );
+                    return (
+                      <span
+                        key={ti}
+                        style={{
+                          display: "inline-block",
+                          opacity: wordOpacity,
+                          filter: `blur(${blur}px)`,
+                          transform: `translateY(${ty}px)`,
+                        }}
+                      >
+                        {w}
+                      </span>
+                    );
+                  })}
+                </div>
+              );
+            });
+          })()}
+        </div>
+
+        {/* Subtle accent dot centered under text */}
+        <div
+          style={{
+            position: "absolute",
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            background: accent,
+            boxShadow: `0 0 18px ${accent}`,
+            opacity: 0.55 * container * lineExit,
+            transform: "translateY(172px)",
+          }}
+        />
+      </AbsoluteFill>
+    );
+  };
 
 const Soundtrack: React.FC<{
   src: string;
@@ -461,43 +752,48 @@ const Soundtrack: React.FC<{
   fadeInSeconds,
   fadeOutSeconds,
 }) => {
-  const frame = useCurrentFrame();
-  const { durationInFrames, fps } = useVideoConfig();
+    const frame = useCurrentFrame();
+    const { durationInFrames, fps } = useVideoConfig();
 
-  const fadeInFrames = Math.max(1, Math.round(fadeInSeconds * fps));
-  const fadeOutFrames = Math.max(1, Math.round(fadeOutSeconds * fps));
-  const trimBefore =
-    trimBeforeSeconds !== undefined
-      ? Math.round(trimBeforeSeconds * fps)
-      : undefined;
-  const trimAfter =
-    trimAfterSeconds !== undefined
-      ? Math.round(trimAfterSeconds * fps)
-      : undefined;
+    const fadeInFrames = Math.max(1, Math.round(fadeInSeconds * fps));
+    const fadeOutFrames = Math.max(1, Math.round(fadeOutSeconds * fps));
+    const trimBefore =
+      trimBeforeSeconds !== undefined
+        ? Math.round(trimBeforeSeconds * fps)
+        : undefined;
+    const trimAfter =
+      trimAfterSeconds !== undefined
+        ? Math.round(trimAfterSeconds * fps)
+        : undefined;
 
-  const fadeIn = interpolate(frame, [0, fadeInFrames], [0, volume], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-  const fadeOut = interpolate(
-    frame,
-    [durationInFrames - fadeOutFrames, durationInFrames],
-    [volume, 0],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    },
-  );
+    const fadeIn = fadeInFrames <= 0
+      ? volume
+      : interpolate(frame, [0, fadeInFrames], [0, volume], {
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+      });
+    const fadeOutStart = durationInFrames - fadeOutFrames;
+    const fadeOut = fadeOutFrames <= 0 || fadeOutStart >= durationInFrames
+      ? volume
+      : interpolate(
+        frame,
+        [fadeOutStart, durationInFrames],
+        [volume, 0],
+        {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+        },
+      );
 
-  return (
-    <Audio
-      src={resolveAsset(src)}
-      trimBefore={trimBefore}
-      trimAfter={trimAfter}
-      volume={() => Math.min(fadeIn, fadeOut)}
-    />
-  );
-};
+    return (
+      <Audio
+        src={resolveAsset(src)}
+        trimBefore={trimBefore}
+        trimAfter={trimAfter}
+        volume={() => Math.min(fadeIn, fadeOut)}
+      />
+    );
+  };
 
 export const calculateCinematicMetadata: CalculateMetadataFunction<CinematicRendererProps> =
   async ({ props }) => {
@@ -506,14 +802,14 @@ export const calculateCinematicMetadata: CalculateMetadataFunction<CinematicRend
       scenes.length === 0
         ? 30
         : Math.max(
-            ...scenes.map((scene) => scene.startSeconds + scene.durationSeconds),
-          );
+          ...scenes.map((scene) => scene.startSeconds + scene.durationSeconds),
+        );
 
     return {
       durationInFrames: Math.max(1, Math.ceil(totalSeconds * FPS)),
       fps: FPS,
-      width: 1920,
-      height: 1080,
+      width: 1080,
+      height: 1920,
     };
   };
 
@@ -533,6 +829,7 @@ export const CinematicRenderer: React.FC<CinematicRendererProps> = (props) => {
   const resolvedMusic = music || (rawAudio?.music ? {
     src: rawAudio.music.asset_id || rawAudio.music.src,
     volume: rawAudio.music.volume ?? 0.15,
+    trimBeforeSeconds: rawAudio.music.trimBeforeSeconds || rawAudio.music.offset || 0,
   } as CinematicSoundtrack : undefined);
 
   const resolvedSoundtrack = soundtrack || (rawAudio?.narration ? {
@@ -576,6 +873,7 @@ export const CinematicRenderer: React.FC<CinematicRendererProps> = (props) => {
           ) : (
             <TitleCard
               text={scene.text}
+              durationSeconds={scene.durationSeconds}
               accent={scene.accent ?? "#86d8ff"}
               intensity={scene.intensity ?? 1}
               titleFontSize={titleFontSize}

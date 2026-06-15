@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>🎬 Reel Timeline Editor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+Devanagari:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -24,7 +24,13 @@
 
       <div class="header-actions">
         <a href="/" class="btn btn-outline">🏠 Upload More</a>
-        <button class="btn btn-red" onclick="resetWorkspace()">🧹 Reset Workspace</button>
+        <button class="btn btn-outline" id="btn-reset" onclick="resetWorkspace()" title="Reset Workspace" style="padding: 0 10px; font-size: 11px; opacity: 0.55; gap: 4px;">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 .49-3.87"></path></svg>
+          Reset
+        </button>
+        <button class="btn btn-polish" id="btn-add-transitions" onclick="addTransitionsAndMusic()">
+          <span id="polish-btn-label">✨ Add Transitions &amp; Music</span>
+        </button>
         <button class="btn btn-glowing" id="btn-build-reel" onclick="buildReel()">
           <span id="build-btn-label">🔄 Build Reel</span>
         </button>
@@ -200,6 +206,23 @@
         </div>
       </div>
 
+      <!-- Polished Reel Inline Preview -->
+      <div id="polished-preview-section" class="polished-preview-card" style="display:none;">
+        <div class="polished-preview-header">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div class="polished-badge">🎬 AI Polished Reel</div>
+            <span style="font-size:11px; color:var(--text-muted);">Transitions + Music applied</span>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <a href="/download/reel" class="btn btn-outline" style="font-size:11px; padding: 4px 12px; text-decoration:none;">⬇️ Download</a>
+            <button class="btn btn-outline" style="font-size:11px; padding: 4px 12px;" onclick="hidePolishedPreview()">✕ Close</button>
+          </div>
+        </div>
+        <div class="polished-preview-body">
+          <video id="polished-reel-player" class="polished-reel-video" controls playsinline></video>
+        </div>
+      </div>
+
     </section>
 
     <!-- 3. RIGHT COLUMN: Narrative AI Director & Story Arc -->
@@ -280,7 +303,134 @@
 
   </main>
 
+  <!-- 4. POLISH PANELS: Transitions | Volume | Music | Captions -->
+  <div id="polish-panels-section" class="polish-panels-wrapper">
+    <div class="polish-panels-inner">
+      <!-- Tab Header -->
+      <div class="polish-tab-bar">
+        <button class="polish-tab active" id="tab-btn-transitions" onclick="switchPolishTab('transitions')">🎞 Transitions</button>
+        <button class="polish-tab" id="tab-btn-music" onclick="switchPolishTab('music')">🎵 Music</button>
+        <button class="polish-tab" id="tab-btn-captions" onclick="switchPolishTab('captions')">💬 Captions</button>
+        <div style="flex:1;"></div>
+        <span style="font-size:11px; color:var(--text-dim); align-self:center; padding-right:4px;">Auto-saved on change</span>
+      </div>
+
+      <!-- Transitions Tab -->
+      <div id="tab-transitions" class="polish-tab-content active">
+        <div id="transitions-panel-grid" class="transitions-grid">
+          <div style="color:var(--text-muted); font-size:13px; padding:16px;">Click "✨ Add Transitions &amp; Music" to auto-fill, or build your sequence first.</div>
+        </div>
+      </div>
+
+      <!-- Volume Tab -->
+      <div id="tab-volume" class="polish-tab-content">
+        <div id="volume-panel-list" class="volume-panel">
+          <div style="color:var(--text-muted); font-size:13px; padding:16px;">Add clips to the sequence to adjust volumes.</div>
+        </div>
+      </div>
+
+      <!-- Music Tab -->
+      <div id="tab-music" class="polish-tab-content">
+        <div class="music-panel">
+          <div class="music-panel-row">
+            <div class="music-panel-left">
+              <div class="music-disc" id="music-disc-anim">🎵</div>
+              <div>
+                <div style="font-weight:600; font-size:14px; margin-bottom:4px;" id="music-genre-label">Cinematic Epic</div>
+                <div style="font-size:11px; color:var(--text-muted);">AI-selected based on reel mood</div>
+              </div>
+            </div>
+            <div class="music-panel-controls">
+              <label class="music-form-label">Genre</label>
+              <select id="music-genre-select" class="inout-num-input" onchange="onMusicGenreSelectChange(this.value)" style="width:180px; font-size:12px; padding: 4px;">
+                <option value="cinematic_epic">🎬 Cinematic Epic</option>
+                <option value="chill_lofi">🌊 Chill Lo-Fi</option>
+                <option value="upbeat_pop">⚡ Upbeat Pop</option>
+                <option value="romantic_orchestral">🌹 Romantic Orchestral</option>
+                <option value="travel_acoustic">🌍 Travel Acoustic</option>
+                <option value="bollywood_lofi">✨ Bollywood / Hindi Lofi</option>
+                <option value="none">🔇 No Music</option>
+                <option value="custom">✍️ Custom Song / Artist...</option>
+              </select>
+              <input type="text" id="music-custom-input" class="inout-num-input" onchange="onCustomMusicChange(this.value)" style="display:none; width:180px; font-size:12px; padding: 4px; margin-top: 6px;" placeholder="Type song name or artist..." />
+              <label class="music-form-label" style="margin-top:12px;">Music Volume</label>
+              <div style="display:flex; align-items:center; gap:10px;">
+                <input type="range" id="music-volume-slider" min="0" max="100" value="40"
+                       oninput="onMusicVolumeChange(this.value)"
+                       style="flex:1; accent-color:var(--accent);" />
+                <span id="music-volume-val" style="font-size:12px; font-weight:600; min-width:32px;">40%</span>
+              </div>
+              <label class="music-form-label" style="margin-top:12px;">Music Start Offset (seconds)</label>
+              <div style="display:flex; align-items:center; gap:12px;">
+                <input type="range" id="music-offset-slider" min="0" max="300" value="0" step="1"
+                       oninput="onMusicOffsetSliderInput(this.value)"
+                       style="flex:1; accent-color:var(--accent);" />
+                <div style="display:flex; align-items:center; gap:4px; flex-shrink:0;">
+                  <input type="number" id="music-offset-input" min="0" step="1" value="0"
+                         oninput="onMusicOffsetNumberInput(this.value)"
+                         style="width:60px; text-align:center; accent-color:var(--accent); background: rgba(0,0,0,0.2); border: 1px solid var(--border); color: #fff; padding: 4px; border-radius: 4px; height: 28px; font-size:12px;" />
+                  <span style="font-size:11px; color:var(--text-muted);">sec</span>
+                </div>
+              </div>
+              <div style="margin-top: 12px;">
+                <label class="music-form-label" style="margin-bottom: 8px; display: block;">Preview Current Music</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <audio id="music-preview-player" controls style="height: 32px; flex: 1; border-radius: 4px;"></audio>
+                  <button class="btn btn-outline" style="padding: 4px 8px; font-size: 11px;" onclick="loadMusicPreview()">↻</button>
+                </div>
+                <div style="font-size: 10px; color: var(--text-dim); margin-top: 4px;">Plays the music from the latest build so you can find the exact hook offset.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Captions Tab -->
+      <div id="tab-captions" class="polish-tab-content">
+        <!-- Style Selector + Inline Color Picker (single row) -->
+        <div style="margin-bottom: 20px; padding: 16px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+          <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;">Overall Caption Style</div>
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <!-- Style dropdown -->
+            <select id="caption-style-select" class="form-select" style="flex: 1; min-width: 200px;"
+                    onchange="polishSettings.caption_style = this.value; savePolish(); updateCaptionColorUI();">
+              <option value="none">🔇 No Captions</option>
+              <option value="cinematic">✨ Cinematic (Noto Sans + Inter)</option>
+              <option value="minimal">🤍 Minimal (Clean Inter)</option>
+              <option value="bold">🔥 Bold Impact (Heavy Uppercase)</option>
+              <option value="hindi">🕉️ Hindi Text (White + Clean)</option>
+              <option value="typewriter">⌨️ Typewriter (Cyan Monospace)</option>
+              <option value="aesthetic">🎭 Aesthetic Split (Cursive + Serif)</option>
+              <option value="handwritten">✍️ Handwritten Script (Kalam / Laila)</option>
+            </select>
+            <!-- Inline color picker (single, for all styles) -->
+            <div id="caption-color-inline-row" style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+              <span id="caption-color-disabled-hint" style="font-size: 10px; color: var(--text-dim); display: none; font-style: italic; white-space: nowrap;">Preset palette</span>
+              <button class="btn btn-outline" id="caption-color-reset-btn"
+                      style="padding: 3px 8px; font-size: 10px; height: 32px;"
+                      onclick="resetActiveStyleColor()">Default</button>
+              <input type="color" id="caption-color-picker-active"
+                     style="width: 38px; height: 32px; border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; background: none; cursor: pointer; padding: 0;"
+                     onchange="onActiveStyleColorChange(this.value)" />
+              <input type="text" id="caption-color-hex-active" class="form-input"
+                     style="width: 74px; font-family: 'JetBrains Mono', monospace; font-size: 11px; text-transform: uppercase; text-align: center; height: 32px; padding: 4px 6px; letter-spacing: 0.05em;"
+                     placeholder="Default" onchange="onActiveStyleColorHexChange(this.value)" />
+            </div>
+            <!-- Caption Position toggle -->
+            <div style="display: flex; align-items: center; gap: 4px; flex-shrink: 0; background: rgba(0,0,0,0.2); padding: 3px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); height: 32px;">
+              <button id="cap-pos-bottom-btn" class="btn btn-outline" style="padding: 2px 10px; font-size: 10px; height: 24px; border: none; border-radius: 4px;" onclick="setCaptionPosition('bottom')">Bottom</button>
+              <button id="cap-pos-top-btn" class="btn btn-outline" style="padding: 2px 10px; font-size: 10px; height: 24px; border: none; border-radius: 4px;" onclick="setCaptionPosition('top')">Top</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="captions-panel-list" class="captions-panel">
+          <div style="color:var(--text-muted); font-size:13px; padding:16px;">Add clips to the sequence to add per-clip captions.</div>
+        </div>
+      </div>
+
   <!-- 4. MODALS & OVERLAYS: Add Clip Manually -->
+
   <div id="add-clip-modal" class="modal-overlay" onclick="if(event.target === this) closeAddModal()">
     <div class="modal-card">
       <div class="modal-header">
@@ -341,6 +491,44 @@
 
   <!-- Custom Core Script logic -->
   <script>
+    // Polish settings state
+    let userCustomMusic = false;
+    let polishSettings = {
+      transitions: [],   // length = active_clips - 1, e.g. ["fade","cut"]
+      volumes:     [],   // length = active_clips, e.g. [100, 90, 110]
+      captions:    [],   // length = active_clips, e.g. ["Arriving in paradise", ""]
+      music: { genre: 'cinematic_epic', volume: 40 },
+      caption_style: 'cinematic',
+      caption_mode: 'per-clip',
+      caption_position: 'bottom',
+      caption_color: '',
+      caption_style_colors: {
+        minimal: '',
+        bold: '',
+        hindi: '',
+        handwritten: '',
+      },
+    };
+
+    const TRANSITION_LABELS = {
+      cut:      { icon: '✂', label: 'Cut' },
+      fade:     { icon: '≈', label: 'Fade' },
+      dissolve: { icon: '◌', label: 'Dissolve' },
+      zoom_in:  { icon: '⊕', label: 'Zoom In' },
+      zoom_out: { icon: '⊖', label: 'Zoom Out' },
+      wipe:     { icon: '▶', label: 'Wipe' },
+    };
+
+    const GENRE_LABELS = {
+      cinematic_epic:      '🎬 Cinematic Epic',
+      chill_lofi:          '🌊 Chill Lo-Fi',
+      upbeat_pop:          '⚡ Upbeat Pop',
+      romantic_orchestral: '🌹 Romantic Orchestral',
+      travel_acoustic:     '🌍 Travel Acoustic',
+      bollywood_lofi:      '✨ Bollywood / Hindi Lofi',
+      none:                '🔇 No Music',
+    };
+
     let segments = [];
     let videoInfos = [];
     let activeIdx = 0; // The index of the selected segment in the global `segments` array
@@ -597,7 +785,8 @@
         .filter(item => item.seg.is_used !== false)
         .sort((a, b) => (a.seg.story_position ?? 0) - (b.seg.story_position ?? 0));
 
-      let cardsHtml = activeSegs.map((item, seqIdx) => {
+      let cardsHtml = '';
+      activeSegs.forEach((item, seqIdx) => {
         const seg = item.seg;
         const origIdx = item.index;
         const role = (seg.story_role || seg.narrative_role || 'clip').toLowerCase();
@@ -615,7 +804,7 @@
           --clip-color-glow: ${theme.glow};
         `;
 
-        return `
+        cardsHtml += `
           <div class="sequence-item ${isActive}" 
                style="${styleVars}" 
                draggable="true"
@@ -632,9 +821,21 @@
             <div class="sequence-item-role">${role}</div>
           </div>
         `;
-      }).join('');
 
-      // Append the "+ Add Clip" card at the end
+        // Insert transition chip between clips
+        if (seqIdx < activeSegs.length - 1) {
+          const tType = polishSettings.transitions[seqIdx] || 'cut';
+          const tMeta = TRANSITION_LABELS[tType] || { icon: '✂', label: 'Cut' };
+          cardsHtml += `
+            <div class="transition-chip" title="Click to cycle transition type" onclick="cycleTransition(${seqIdx})">
+              <span class="transition-chip-icon">${tMeta.icon}</span>
+              <span class="transition-chip-label">${tMeta.label}</span>
+            </div>
+          `;
+        }
+      });
+
+      // Append the "+" add card
       cardsHtml += `
         <div class="sequence-item-add" onclick="openAddModal()" title="Add Clip Manually">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
@@ -642,6 +843,18 @@
       `;
 
       timeline.innerHTML = cardsHtml;
+    }
+
+    // Cycle transition type on chip click
+    function cycleTransition(junctionIdx) {
+      const ORDER = ['cut', 'fade', 'dissolve', 'zoom_in', 'zoom_out', 'wipe'];
+      const current = polishSettings.transitions[junctionIdx] || 'cut';
+      const nextIdx = (ORDER.indexOf(current) + 1) % ORDER.length;
+      polishSettings.transitions[junctionIdx] = ORDER[nextIdx];
+      savePolish();
+      renderSequenceTimeline();
+      renderTransitionsPanel();
+      showToast('Transition → ' + ORDER[nextIdx].replace('_', ' '), 'success');
     }
 
     // ── Right Sidebar: Story Arc Navigation List ───────────────────────
@@ -1308,6 +1521,498 @@
         buildBtn.disabled = false;
         showToast('Sequence changed — click Rebuild Reel to apply.', 'info');
       }
+      // Also reset the polish button back to the original label!
+      const polishLabel = document.getElementById('polish-btn-label');
+      if (polishLabel) {
+        polishLabel.innerHTML = '✨ Add Transitions &amp; Music';
+      }
+    }
+
+    // ── Polish Settings Persistence ─────────────────────────────────────
+    async function loadPolish() {
+      try {
+        const res  = await fetch('/api/load_polish');
+        const data = await res.json();
+        if (Array.isArray(data.transitions)) polishSettings.transitions = data.transitions;
+        if (Array.isArray(data.volumes))     polishSettings.volumes     = data.volumes;
+        if (Array.isArray(data.captions))    polishSettings.captions    = data.captions;
+        if (data.music) {
+          polishSettings.music = data.music;
+          userCustomMusic = !!data.music.is_user_custom;
+        }
+        if (data.caption_style) {
+          polishSettings.caption_style = data.caption_style;
+          const capStyleSel = document.getElementById('caption-style-select');
+          if (capStyleSel) capStyleSel.value = data.caption_style;
+        }
+        if (data.caption_mode) polishSettings.caption_mode = data.caption_mode;
+        if (data.caption_position) polishSettings.caption_position = data.caption_position;
+
+        // Load per-style colors
+        if (data.caption_style_colors && typeof data.caption_style_colors === 'object') {
+          polishSettings.caption_style_colors = {
+            minimal: data.caption_style_colors.minimal || '',
+            bold: data.caption_style_colors.bold || '',
+            hindi: data.caption_style_colors.hindi || '',
+            handwritten: data.caption_style_colors.handwritten || '',
+          };
+        }
+        // Hydrate per-style color pickers from loaded state
+        ['minimal', 'bold', 'hindi', 'handwritten'].forEach(style => {
+          const color = polishSettings.caption_style_colors[style] || '';
+          const picker = document.getElementById(`caption-color-picker-${style}`);
+          const hexEl  = document.getElementById(`caption-color-hex-${style}`);
+          if (picker) picker.value = color || '#ffffff';
+          if (hexEl)  hexEl.value  = color ? color.toUpperCase() : '';
+        });
+
+        const volSld = document.getElementById('music-volume-slider');
+        const volVal = document.getElementById('music-volume-val');
+        const offsetInput = document.getElementById('music-offset-input');
+        updateMusicGenreUI(polishSettings.music.genre || 'cinematic_epic');
+        if (volSld) volSld.value = polishSettings.music.volume ?? 40;
+        if (volVal) volVal.textContent = (polishSettings.music.volume ?? 40) + '%';
+        if (offsetInput) offsetInput.value = polishSettings.music.offset || 0;
+        const offsetSlider = document.getElementById('music-offset-slider');
+        if (offsetSlider) offsetSlider.value = polishSettings.music.offset || 0;
+        loadMusicPreview();
+        // Sync single inline color picker state with loaded style
+        updateCaptionColorUI();
+        updateCaptionPositionUI();
+      } catch(e) { console.warn('loadPolish:', e); }
+    }
+
+    async function savePolish() {
+      try {
+        await fetch('/api/save_polish', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(polishSettings),
+        });
+        
+        // Settings changed — reset build button to Rebuild Reel so clicking it compiles
+        const buildBtn = document.getElementById('btn-build-reel');
+        const label    = document.getElementById('build-btn-label');
+        if (buildBtn && label && label.textContent.includes('Preview')) {
+          label.innerHTML = '🔄 Rebuild Reel';
+          buildBtn.onclick = buildReel;
+          buildBtn.disabled = false;
+        }
+      } catch(e) { console.warn('savePolish:', e); }
+    }
+
+    // ── Add Transitions & Music (AI Polish) ──────────────────────────────
+    async function addTransitionsAndMusic() {
+      const btn   = document.getElementById('btn-add-transitions');
+      const label = document.getElementById('polish-btn-label');
+      
+      // If already polished, clicking this button should build the reel directly!
+      if (label && label.innerHTML.includes('Click Build')) {
+        buildReel();
+        return;
+      }
+      
+      btn.disabled = true;
+      label.innerHTML = '⏳ AI Polishing...';
+      try {
+        const currentGenre = polishSettings.music?.genre || '';
+        // If the user typed a custom song, lock it so the AI doesn't override it
+        const lockedSong = userCustomMusic ? currentGenre : null;
+        const res  = await fetch('/api/apply_polish', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ locked_song: lockedSong })
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          showToast('Polish failed: ' + (data.error || 'Unknown'), 'error');
+          label.innerHTML = '✨ Add Transitions &amp; Music'; btn.disabled = false; return;
+        }
+        if (Array.isArray(data.transitions)) polishSettings.transitions = data.transitions;
+        if (data.music) {
+          polishSettings.music = data.music;
+          userCustomMusic = !!data.music.is_user_custom;
+        }
+        if (data.caption_mode) polishSettings.caption_mode = data.caption_mode;
+        if (data.caption_position) polishSettings.caption_position = data.caption_position;
+        if (data.caption_style) {
+          polishSettings.caption_style = data.caption_style;
+          const capStyleSel = document.getElementById('caption-style-select');
+          if (capStyleSel) capStyleSel.value = data.caption_style;
+        }
+        // Load per-style colors returned by the AI polish (if any)
+        if (data.caption_style_colors && typeof data.caption_style_colors === 'object') {
+          polishSettings.caption_style_colors = {
+            minimal: data.caption_style_colors.minimal || '',
+            bold: data.caption_style_colors.bold || '',
+            hindi: data.caption_style_colors.hindi || '',
+            handwritten: data.caption_style_colors.handwritten || '',
+          };
+          // Hydrate color pickers
+          ['minimal', 'bold', 'hindi', 'handwritten'].forEach(style => {
+            const color = polishSettings.caption_style_colors[style] || '';
+            const picker = document.getElementById(`caption-color-picker-${style}`);
+            const hexEl  = document.getElementById(`caption-color-hex-${style}`);
+            if (picker) picker.value = color || '#ffffff';
+            if (hexEl)  hexEl.value  = color ? color.toUpperCase() : '';
+          });
+        }
+        const activeCount = data.clip_count || segments.filter(s => s.is_used !== false).length;
+        
+        if (Array.isArray(data.captions)) {
+            polishSettings.captions = data.captions;
+        } else if (polishSettings.captions.length !== activeCount) {
+            polishSettings.captions = Array(activeCount).fill('');
+        }
+        
+        if (polishSettings.volumes.length !== activeCount) polishSettings.volumes = Array(activeCount).fill(100);
+        updateMusicGenreUI(data.music.genre);
+        
+        const volSld = document.getElementById('music-volume-slider');
+        const volVal = document.getElementById('music-volume-val');
+        if (volSld) volSld.value = data.music.volume ?? 40;
+        if (volVal) volVal.textContent = (data.music.volume ?? 40) + '%';
+
+        renderAll();
+        renderTransitionsPanel();
+        renderVolumePanel();
+        renderCaptionsPanel();
+        updateCaptionPositionUI();
+        updateCaptionColorUI();
+        await savePolish();
+        loadMusicPreview();
+        document.getElementById('music-disc-anim')?.classList.add('spinning');
+        const tc = data.transitions.length;
+        showToast(`✨ ${tc} transition${tc !== 1 ? 's' : ''} + ${(GENRE_LABELS[data.music.genre] || data.music.genre)} music ready!`, 'success');
+        label.innerHTML = '✅ Polished! Click Build →';
+        btn.disabled = false;
+        
+        // Also ensure the main build button is set to build/rebuild
+        const buildBtn = document.getElementById('btn-build-reel');
+        const buildLabel = document.getElementById('build-btn-label');
+        if (buildBtn && buildLabel) {
+          buildLabel.innerHTML = '🔄 Rebuild Reel';
+          buildBtn.onclick = buildReel;
+          buildBtn.disabled = false;
+        }
+        
+        document.getElementById('polish-panels-section')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        switchPolishTab('transitions');
+      } catch(e) {
+        showToast('Polish request failed.', 'error');
+        label.innerHTML = '✨ Add Transitions &amp; Music'; btn.disabled = false;
+      }
+    }
+
+    // ── Polish Panels ───────────────────────────────────────────────────
+    function switchPolishTab(name) {
+      document.querySelectorAll('.polish-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.polish-tab-content').forEach(c => c.classList.remove('active'));
+      document.getElementById('tab-btn-' + name)?.classList.add('active');
+      document.getElementById('tab-' + name)?.classList.add('active');
+    }
+
+    function getActiveSequence() {
+      return segments
+        .map((seg, index) => ({ seg, index }))
+        .filter(item => item.seg.is_used !== false)
+        .sort((a, b) => (a.seg.story_position ?? 0) - (b.seg.story_position ?? 0));
+    }
+
+    function renderTransitionsPanel() {
+      const grid = document.getElementById('transitions-panel-grid');
+      if (!grid) return;
+      const activeSegs = getActiveSequence();
+      if (activeSegs.length < 2) {
+        grid.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:16px;">Need at least 2 clips to configure transitions.</div>';
+        return;
+      }
+      const OPTS = Object.entries(TRANSITION_LABELS).map(([val, m]) =>
+        `<option value="${val}">${m.icon} ${m.label}</option>`).join('');
+      grid.innerHTML = Array.from({ length: activeSegs.length - 1 }, (_, i) => {
+        const from = getSegmentTitle(activeSegs[i].seg);
+        const to   = getSegmentTitle(activeSegs[i + 1].seg);
+        const cur  = polishSettings.transitions[i] || 'cut';
+        return `
+          <div class="transition-row">
+            <div class="transition-row-clips">
+              <span class="transition-clip-name">${from}</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+              <span class="transition-clip-name">${to}</span>
+            </div>
+            <select class="inout-num-input" style="font-size:12px;width:150px;"
+                    onchange="polishSettings.transitions[${i}]=this.value; savePolish(); renderSequenceTimeline()">
+              ${OPTS.replace(`value="${cur}"`, `value="${cur}" selected`)}
+            </select>
+          </div>`;
+      }).join('');
+    }
+
+    function renderVolumePanel() {
+      const list = document.getElementById('volume-panel-list');
+      if (!list) return;
+      const activeSegs = getActiveSequence();
+      if (activeSegs.length === 0) { list.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:16px;">No active clips.</div>'; return; }
+      while (polishSettings.volumes.length < activeSegs.length) polishSettings.volumes.push(100);
+      list.innerHTML = activeSegs.map((item, i) => {
+        const name = getSegmentTitle(item.seg);
+        const vol  = polishSettings.volumes[i] ?? 100;
+        return `
+          <div class="volume-row">
+            <div class="volume-row-name">${i + 1}. ${name}</div>
+            <div class="volume-row-slider">
+              <input type="range" min="0" max="150" value="${vol}"
+                     oninput="polishSettings.volumes[${i}]=parseInt(this.value); document.getElementById('vol-val-${i}').textContent=this.value+'%'; savePolish();"
+                     style="flex:1; accent-color:var(--accent);" />
+              <span id="vol-val-${i}" style="font-size:11px;font-weight:700;min-width:38px;text-align:right;">${vol}%</span>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    function renderCaptionsPanel() {
+      const list = document.getElementById('captions-panel-list');
+      if (!list) return;
+      const activeSegs = getActiveSequence();
+      if (activeSegs.length === 0) { list.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:16px;">No active clips.</div>'; return; }
+      
+      if (polishSettings.caption_mode === 'single') {
+        const caption = polishSettings.captions[0] || '';
+        list.innerHTML = `
+          <div class="caption-row" style="padding: 12px; background: rgba(255,255,255,0.02); border-radius: 6px;">
+            <div class="caption-clip-name" style="font-weight: 600; margin-bottom: 8px;">Single Reel Caption (shows on all clips)</div>
+            <input type="text" class="caption-input" style="width: 100%;"
+                   placeholder="Type the caption for your entire reel (use '|' for line breaks)..."
+                   value="${caption.replace(/"/g, '&quot;')}"
+                   oninput="polishSettings.captions = [this.value]; savePolish();" />
+          </div>`;
+      } else {
+        while (polishSettings.captions.length < activeSegs.length) polishSettings.captions.push('');
+        list.innerHTML = activeSegs.map((item, i) => {
+          const name    = getSegmentTitle(item.seg);
+          const caption = polishSettings.captions[i] || '';
+          return `
+            <div class="caption-row">
+              <div class="caption-clip-name">${i + 1}. ${name}</div>
+              <input type="text" class="caption-input"
+                     placeholder="Caption text (leave empty for none)..."
+                     value="${caption.replace(/"/g, '&quot;')}"
+                     oninput="polishSettings.captions[${i}]=this.value; savePolish();" />
+            </div>`;
+        }).join('');
+      }
+    }
+
+    function updateMusicGenreUI(genre) {
+      const genSel = document.getElementById('music-genre-select');
+      const customInput = document.getElementById('music-custom-input');
+      const genLbl = document.getElementById('music-genre-label');
+      
+      if (!genSel) return;
+      
+      const presets = ['cinematic_epic', 'chill_lofi', 'upbeat_pop', 'romantic_orchestral', 'travel_acoustic', 'bollywood_lofi', 'none'];
+      
+      // Map spaces to underscores for compatibility with older settings
+      let canonicalGenre = genre ? genre.replace(' ', '_') : 'cinematic_epic';
+      if (presets.includes(canonicalGenre)) {
+        genSel.value = canonicalGenre;
+        if (customInput) customInput.style.display = 'none';
+        if (genLbl) genLbl.textContent = GENRE_LABELS[canonicalGenre] || canonicalGenre;
+      } else {
+        genSel.value = 'custom';
+        if (customInput) {
+          customInput.style.display = 'block';
+          customInput.value = genre;
+        }
+        if (genLbl) genLbl.textContent = genre;
+      }
+    }
+
+    function onMusicGenreSelectChange(val) {
+      const customInput = document.getElementById('music-custom-input');
+      if (val === 'custom') {
+        userCustomMusic = true;
+        if (customInput) {
+          customInput.style.display = 'block';
+          customInput.value = '';
+          customInput.focus();
+        }
+        polishSettings.music.genre = '';
+      } else {
+        userCustomMusic = false;
+        if (customInput) customInput.style.display = 'none';
+        polishSettings.music.genre = val;
+        const genLbl = document.getElementById('music-genre-label');
+        if (genLbl) genLbl.textContent = GENRE_LABELS[val] || val;
+        savePolish();
+        loadMusicPreview();
+      }
+    }
+
+    function onCustomMusicChange(val) {
+      userCustomMusic = true;
+      polishSettings.music.genre = val;
+      const genLbl = document.getElementById('music-genre-label');
+      if (genLbl) genLbl.textContent = val || 'Custom Song';
+      savePolish();
+      loadMusicPreview();
+    }
+
+    function onMusicVolumeChange(val) {
+      polishSettings.music.volume = parseInt(val);
+      const volVal = document.getElementById('music-volume-val');
+      if (volVal) volVal.textContent = val + '%';
+      savePolish();
+    }
+
+    function onMusicOffsetChange(val) {
+      polishSettings.music.offset = parseFloat(val) || 0;
+      savePolish();
+    }
+
+    function onMusicOffsetSliderInput(val) {
+      document.getElementById('music-offset-input').value = val;
+      onMusicOffsetChange(val);
+    }
+
+    function onMusicOffsetNumberInput(val) {
+      document.getElementById('music-offset-slider').value = val || 0;
+      onMusicOffsetChange(val);
+    }
+
+    // Styles that use a preset palette (no custom color support)
+    const PRESET_PALETTE_STYLES = new Set(['cinematic', 'aesthetic', 'none']);
+
+    // Update the color picker UI whenever the style dropdown changes
+    function updateCaptionColorUI() {
+      const style = polishSettings.caption_style || 'cinematic';
+      const isDisabled = PRESET_PALETTE_STYLES.has(style);
+      const picker   = document.getElementById('caption-color-picker-active');
+      const hexInput = document.getElementById('caption-color-hex-active');
+      const resetBtn = document.getElementById('caption-color-reset-btn');
+      const hint     = document.getElementById('caption-color-disabled-hint');
+
+      if (picker)   { picker.disabled   = isDisabled; picker.style.opacity   = isDisabled ? '0.3' : '1'; picker.style.cursor = isDisabled ? 'not-allowed' : 'pointer'; }
+      if (hexInput) { hexInput.disabled = isDisabled; hexInput.style.opacity = isDisabled ? '0.3' : '1'; }
+      if (resetBtn) { resetBtn.disabled = isDisabled; resetBtn.style.opacity = isDisabled ? '0.3' : '1'; }
+      if (hint)     hint.style.display = isDisabled ? 'inline' : 'none';
+
+      if (!isDisabled) {
+        // Load the saved color for this style into the single picker
+        if (!polishSettings.caption_style_colors) polishSettings.caption_style_colors = {};
+        const saved = polishSettings.caption_style_colors[style] || '';
+        if (picker)   picker.value   = saved || '#ffffff';
+        if (hexInput) hexInput.value = saved ? saved.toUpperCase() : '';
+      } else {
+        if (picker)   picker.value   = '#ffffff';
+        if (hexInput) hexInput.value = '';
+      }
+    }
+
+    function onActiveStyleColorChange(val) {
+      const style = polishSettings.caption_style || 'cinematic';
+      if (PRESET_PALETTE_STYLES.has(style)) return;
+      if (!polishSettings.caption_style_colors) polishSettings.caption_style_colors = {};
+      polishSettings.caption_style_colors[style] = val;
+      const hexInput = document.getElementById('caption-color-hex-active');
+      if (hexInput) hexInput.value = val.toUpperCase();
+      savePolish();
+    }
+
+    function onActiveStyleColorHexChange(val) {
+      const style = polishSettings.caption_style || 'cinematic';
+      if (PRESET_PALETTE_STYLES.has(style)) return;
+      if (!val) { resetActiveStyleColor(); return; }
+      if (!val.startsWith('#')) val = '#' + val;
+      if (val.length === 7 && /^#[0-9A-F]{6}$/i.test(val)) {
+        if (!polishSettings.caption_style_colors) polishSettings.caption_style_colors = {};
+        polishSettings.caption_style_colors[style] = val;
+        const picker = document.getElementById('caption-color-picker-active');
+        if (picker) picker.value = val;
+        savePolish();
+      } else {
+        showToast('Invalid hex color format. Use #RRGGBB', 'error');
+      }
+    }
+
+    function resetActiveStyleColor() {
+      const style = polishSettings.caption_style || 'cinematic';
+      if (PRESET_PALETTE_STYLES.has(style)) return;
+      if (!polishSettings.caption_style_colors) polishSettings.caption_style_colors = {};
+      polishSettings.caption_style_colors[style] = '';
+      const picker   = document.getElementById('caption-color-picker-active');
+      const hexInput = document.getElementById('caption-color-hex-active');
+      if (picker)   picker.value   = '#ffffff';
+      if (hexInput) hexInput.value = '';
+      savePolish();
+    }
+
+    function setCaptionPosition(pos) {
+      polishSettings.caption_position = pos;
+      savePolish();
+      updateCaptionPositionUI();
+    }
+
+    function updateCaptionPositionUI() {
+      const pos = polishSettings.caption_position || 'bottom';
+      const topBtn = document.getElementById('cap-pos-top-btn');
+      const bottomBtn = document.getElementById('cap-pos-bottom-btn');
+      if (topBtn && bottomBtn) {
+        if (pos === 'top') {
+          topBtn.style.background = 'var(--accent, #7c6af7)';
+          topBtn.style.color = '#fff';
+          bottomBtn.style.background = 'transparent';
+          bottomBtn.style.color = 'var(--text-muted)';
+        } else {
+          bottomBtn.style.background = 'var(--accent, #7c6af7)';
+          bottomBtn.style.color = '#fff';
+          topBtn.style.background = 'transparent';
+          topBtn.style.color = 'var(--text-muted)';
+        }
+      }
+    }
+
+    // Keep legacy per-style helpers that backend/loadPolish may still call
+    function onStyleColorChange(style, val) {
+      if (!polishSettings.caption_style_colors) polishSettings.caption_style_colors = {};
+      polishSettings.caption_style_colors[style] = val;
+      savePolish();
+    }
+    function resetStyleColor(style) {
+      if (!polishSettings.caption_style_colors) polishSettings.caption_style_colors = {};
+      polishSettings.caption_style_colors[style] = '';
+      savePolish();
+    }
+    function resetAllStyleColors() {
+      ['minimal', 'bold', 'hindi', 'handwritten', 'typewriter'].forEach(s => resetStyleColor(s));
+      updateCaptionColorUI();
+    }
+
+    // ── Inline Polished Preview ─────────────────────────────────────────
+    function showPolishedPreview() {
+      const section = document.getElementById('polished-preview-section');
+      const player  = document.getElementById('polished-reel-player');
+      if (!section || !player) return;
+      player.src = '/preview/reel?t=' + Date.now();
+      player.load();
+      section.style.display = 'block';
+      section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      player.play().catch(() => {});
+    }
+
+    function hidePolishedPreview() {
+      const section = document.getElementById('polished-preview-section');
+      const player  = document.getElementById('polished-reel-player');
+      if (player) { player.pause(); player.src = ''; }
+      if (section) section.style.display = 'none';
+    }
+
+    function loadMusicPreview() {
+      const player = document.getElementById('music-preview-player');
+      if (player) {
+        player.src = '/preview/audio?t=' + Date.now();
+        player.load();
+      }
     }
 
     // ── Build Final Reel ───────────────────────────────────────────────
@@ -1326,6 +2031,7 @@
 
       // Auto-save timeline state first
       await saveSegments();
+      await savePolish();
 
       buildBtn.disabled = true;
       label.textContent = '⏳ Building...';
@@ -1345,14 +2051,14 @@
           clearInterval(interval);
           buildBtn.disabled = false;
           label.innerHTML = '🎬 Preview Reel';
-          buildBtn.onclick = openPreviewReelModal;
+          buildBtn.onclick = showPolishedPreview;
           
           statusTitle.textContent = '✅ Reel Compiled!';
           statusMsg.innerHTML = 'Stitching complete. Click "Preview Reel" to watch or download your video.';
           showToast("Compilation successful!", "success");
           
-          // Auto-open preview modal
-          openPreviewReelModal();
+          // Show inline polished preview (not a modal)
+          showPolishedPreview();
         } else if (data.error) {
           clearInterval(interval);
           buildBtn.disabled = false;
@@ -1399,8 +2105,24 @@
     }
 
     // ── Boot Initialization ──────────────────────────────────────────
-    fetchSegments();
+    fetchSegments().then(() => {
+      renderTransitionsPanel();
+      renderVolumePanel();
+      renderCaptionsPanel();
+    });
     fetchVideos();
+    loadPolish().then(() => {
+      renderTransitionsPanel();
+      renderVolumePanel();
+      renderCaptionsPanel();
+    });
+
+    document.getElementById('music-preview-player')?.addEventListener('loadedmetadata', function() {
+      const slider = document.getElementById('music-offset-slider');
+      if (slider && this.duration) {
+        slider.max = Math.floor(this.duration);
+      }
+    });
   </script>
 </body>
 </html>

@@ -16,6 +16,7 @@ import { ProductReveal, ProductRevealProps } from "./components/ProductReveal";
 import { CaptionOverlay, WordCaption } from "./components/CaptionOverlay";
 import { CollageBurst, CollageBurstProps } from "./CollageBurst";
 import { LyricOverlay, LyricOverlayProps } from "./LyricOverlay";
+import myReelData from "./my_reel.json";
 
 // ---------------------------------------------------------------------------
 // Theme System — prevents every video from looking like dark fintech
@@ -155,14 +156,26 @@ export const Root: React.FC = () => {
         component={CinematicRenderer}
         durationInFrames={30 * 30}
         fps={30}
-        width={1920}
-        height={1080}
+        width={1080}
+        height={1920}
         defaultProps={{
           scenes: [],
           titleFontSize: 78,
           titleWidth: 1320,
           signalLineCount: 18,
         }}
+        calculateMetadata={calculateCinematicMetadata}
+      />
+      <Composition
+        id="MyReelLivePreview"
+        component={CinematicRenderer}
+        durationInFrames={30 * 30}
+        fps={30}
+        width={1080}
+        height={1920}
+        defaultProps={{
+          cuts: myReelData.cuts,
+        } as any}
         calculateMetadata={calculateCinematicMetadata}
       />
       <Composition

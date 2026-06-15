@@ -83,6 +83,7 @@ class AudioMixer(BaseTool):
                             "default": 1.0,
                         },
                         "start_seconds": {"type": "number", "minimum": 0},
+                        "trim_start_seconds": {"type": "number", "minimum": 0, "description": "Offset to start playing from inside the file (e.g., jump to hook)"},
                         "fade_in_seconds": {"type": "number", "minimum": 0},
                         "fade_out_seconds": {"type": "number", "minimum": 0},
                     },
@@ -222,6 +223,9 @@ class AudioMixer(BaseTool):
         input_args = []
 
         for i, track in enumerate(tracks):
+            trim_start = track.get("trim_start_seconds", 0)
+            if trim_start > 0:
+                input_args.extend(["-ss", str(trim_start)])
             input_args.extend(["-i", track["path"]])
             volume = track.get("volume", 1.0)
             delay_ms = int(track.get("start_seconds", 0) * 1000)
@@ -467,6 +471,9 @@ class AudioMixer(BaseTool):
         filter_parts = []
 
         for i, track in enumerate(all_tracks):
+            trim_start = track.get("trim_start_seconds", 0)
+            if trim_start > 0:
+                input_args.extend(["-ss", str(trim_start)])
             input_args.extend(["-i", track["path"]])
             volume = track.get("volume", 1.0)
             delay_ms = int(track.get("start_seconds", 0) * 1000)

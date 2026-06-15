@@ -15,6 +15,10 @@ export interface CinematicVideoScene extends CinematicBaseScene {
   filter?: string;
   fadeInFrames?: number;
   fadeOutFrames?: number;
+  captionText?: string;
+  captionStyle?: string;
+  captionPosition?: string;
+  captionColor?: string;
 }
 
 export interface CinematicTitleScene extends CinematicBaseScene {

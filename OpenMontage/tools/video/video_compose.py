@@ -1306,15 +1306,39 @@ class VideoCompose(BaseTool):
         # Deep-copy props so we don't mutate the original
         props = json.loads(json.dumps(composition_data))
 
+        def _to_file_uri(p: str) -> str:
+            """Convert an absolute local path to a file:// URI for Remotion."""
+            if not p or p.startswith(("http://", "https://", "file://")):
+                return p
+            resolved = Path(p).resolve()
+            if resolved.exists():
+                posix = resolved.as_posix()
+                return f"file:///{posix}" if not posix.startswith("/") else f"file://{posix}"
+            return p
+
         # Convert absolute file paths to file:// URIs for Remotion's
         # Img and OffthreadVideo components
         for cut in props.get("cuts", []):
             source = cut.get("source", "")
-            if source and not source.startswith(("http://", "https://", "file://")):
-                resolved = Path(source).resolve()
-                if resolved.exists():
-                    posix = resolved.as_posix()
-                    cut["source"] = f"file:///{posix}" if not posix.startswith("/") else f"file://{posix}"
+            if source:
+                cut["source"] = _to_file_uri(source)
+
+        # Also convert audio asset paths — without this Remotion's <Audio> tag
+        # receives a raw absolute path that staticFile() cannot serve.
+        audio = props.get("audio", {})
+        if audio:
+            music = audio.get("music", {})
+            if music and music.get("asset_id"):
+                music["asset_id"] = _to_file_uri(music["asset_id"])
+                music["src"] = music["asset_id"]  # alias so CinematicRenderer resolvedMusic.src works
+            narration = audio.get("narration", {})
+            if narration:
+                if narration.get("asset_id"):
+                    narration["asset_id"] = _to_file_uri(narration["asset_id"])
+                    narration["src"] = narration["asset_id"]
+                for seg in narration.get("segments", []):
+                    if seg.get("asset_id"):
+                        seg["asset_id"] = _to_file_uri(seg["asset_id"])
 
         # Build a custom themeConfig from the playbook's actual colors.
         # This ensures every video gets a unique visual identity derived
@@ -1353,6 +1377,11 @@ class VideoCompose(BaseTool):
             composition_id,
             str(output_path),
             "--props", str(props_path),
+            # Increase delayRender timeout for large video files fetched via proxy.
+            # Default is 30s which times out on videos >30MB at frame-seek time.
+            "--timeout", "120000",
+            # Concurrency can be safely increased now that we pre-trim clips.
+            "--concurrency", "4",
         ]
 
         # Apply media profile dimensions
@@ -1371,6 +1400,9 @@ class VideoCompose(BaseTool):
             # Windows npx cannot locate the CLI and returns "could not
             # determine executable to run".
             self.run_command(cmd, timeout=600, cwd=composer_dir)
+        except subprocess.CalledProcessError as e:
+            err_msg = f"Remotion render failed: {e}\nStdout: {e.stdout}\nStderr: {e.stderr}"
+            return ToolResult(success=False, error=err_msg)
         except Exception as e:
             return ToolResult(success=False, error=f"Remotion render failed: {e}")
         finally:

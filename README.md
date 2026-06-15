@@ -7,7 +7,7 @@ An intelligent video processing pipeline and web editor that automatically analy
 ## 🌟 Key Features
 
 *   **Split-Routing AI Engine**: Uses high-performance **NVIDIA NIM** (`build.nvidia.com`) for visual frame analysis and **OpenRouter** for cheap and fast story-text sequencing.
-*   **Intelligent Vision Analysis**: Leverages `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` with an expanded `max_tokens` limit of **1200** to prevent verbose JSON responses from getting truncated.
+*   **Intelligent Vision Analysis**: Leverages `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` with an expanded `max_tokens` limit of **2048** to prevent verbose JSON responses from getting truncated.
 *   **Split-Path Directives Prompting**: Dynamically serves two separate prompt templates depending on whether the user provided **Custom Editing Instructions** or not. When directives are provided, standard rules (like chronological pre-sorting or location grouping) are bypassed to prevent prompt rule contradictions.
 *   **Uploaded File Order Option**: Adds a toggle to skip the LLM story sequencing and order the highlights strictly by the uploaded file order (alphabetically by filename), while still leveraging the VLM to extract the best/highest-quality segments from each video.
 *   **Robust self-correcting JSON Parser**: Uses a balanced bracket matcher scanning in reverse to handle cases where the model outputs reasoning text or self-corrections (extracting the last valid JSON block).

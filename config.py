@@ -14,13 +14,13 @@ CONFIG = {
     ],
 
     # Max tokens limits for API calls to prevent reasoning model over-thinking
-    "max_tokens_vision": 1500,
+    "max_tokens_vision": 2048,
     "max_tokens_text":   1000,
 
     # ── Story Ordering Model ──────────────────────────────────────────────────
     # Text-only call — cheap, can use a fast model
-    "story_order_model":    "openrouter/owl-alpha",
-    "story_order_fallback": "openai/gpt-oss-120b:free",
+    "story_order_model":    "openai/gpt-oss-120b:free",
+    "story_order_fallback": "meta-llama/llama-3-8b-instruct:free",
 
     "max_parallel_vision_calls": 3,
 
