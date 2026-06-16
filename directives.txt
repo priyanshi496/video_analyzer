@@ -1,7 +1,0 @@
-Mood/energy: romantic
-Music type: lyrical song with vocals
-Music volume: 40%
-Target platform: shorts
-Caption style: cinematic
-Caption scope: per-clip (AI writes different caption for each clip)
-Story arc: journey

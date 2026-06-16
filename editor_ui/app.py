@@ -973,9 +973,13 @@ def api_apply_polish():
     # --- Generate Captions using Text LLM ---
     if is_devotional:
         if is_single_caption:
-            captions = ["mandir ki sukoon bhari dhadkan"] * len(active)
+            captions = ["came to see the temple | left actually changed"] * len(active)
         else:
-            captions = ["mandir ki sukoon bhari dhadkan" if i % 2 == 0 else "ganga kinare sukoon mila" for i in range(len(active))]
+            captions = [
+                "came to see the temple | left actually changed" if i % 2 == 0 
+                else "didn't plan to stay for aarti | couldn't leave after" 
+                for i in range(len(active))
+            ]
     else:
         captions = [""] * len(active)
     
@@ -986,46 +990,101 @@ def api_apply_polish():
         prompt_instruction = "Do not generate captions, just pick transitions and song."
         expected_json = '{\n  "transitions": ["fade", "dissolve"],\n  "trending_song": "Artist - Song Name"\n}'
     else:
-        BANNED_PHRASES = [
-            "dil ki dhadkan", "mann ko sukoon", "safar ka rang", "roshni mein",
-            "pal pal", "zindagi ka safar", "dil ko choo", "dhadkan tez",
-            "har kadam mein", "sukoon milta hai", "dil se safar"
-        ]
+        BASE_CAPTION_SYSTEM = """
+You write captions for Instagram reels that people actually save and share.
 
-        caption_system = (
-            "You are writing captions for Indian Instagram reels. "
-            "Your captions get saved and shared — they don't just describe the video, they make someone FEEL something.\n\n"
-            "THE GOLDEN RULE: Two lines that create contrast, tension, or a twist together. "
-            "Line 1 sets up. Line 2 lands the punch. They work as a pair.\n\n"
-            "FORMATS THAT ACTUALLY GO VIRAL:\n"
-            "1. Contrast: 'came for the photo | stayed for the feeling'\n"
-            "2. Earned admission: 'didn't expect to cry here | but the ghats had other plans'\n"
-            "3. Casual + philosophical: 'bss ek pal ke liye ruka tha | ab jaana hi nahi'\n"
-            "4. Specific detail: 'the 4am aarti hits different | when you actually show up'\n"
-            "5. Ironic/self-aware: 'main Buddha dhundhne aaya tha | khud ko dhundh ke gaya'\n"
-            "6. Simple + unexpected: 'yeh jagah | mujhe pata nahi tha'\n\n"
-            "RULES:\n"
-            "- Use pipe '|' to split line 1 and line 2. Exactly ONE pipe per caption.\n"
-            "- Mix casual English + Romanized Hindi naturally. Real people don't code-switch perfectly.\n"
-            "- NEVER use: 'dil ki dhadkan', 'mann ko sukoon', 'safar ka rang', 'roshni mein', 'pal pal'\n"
-            "- NEVER describe what's visually happening in the clip — evoke how it FEELS\n"
-            "- NEVER sound like a translation of a Hindi song lyric\n"
-            "- NO hashtags, NO emojis, NO punctuation except the pipe\n"
-            "- Each caption should feel like it came from a 22-year-old solo traveler who reads Rupi Kaur\n\n"
-            "BAD (do not write like this):\n"
-            "- 'ganga kinare sukoon mila | dil ki dhadkan tez ho gayi'\n"
-            "- 'stupa ki roshni | mann mein ek aag jalti'\n"
-            "- 'nadi ki lehron mein | dil ka raag bajta'\n\n"
-            "GOOD (aim for this energy):\n"
-            "- 'yahan aake samjha | kuch cheezein feel karni padti hain'\n"
-            "- 'came here with questions | left with better ones'\n"
-            "- 'subah 4 baje ki aarti | aur sab kuch theek lag raha tha'\n"
-            "- 'didn't know peace had a sound | until I heard the bells'\n"
-            "- 'bss ek pal ke liye ruke the | 3 ghante ho gaye'\n"
-            "\n\nABSOLUTELY BANNED PHRASES (never use these, not even partially):\n"
-            + "\n".join(f"- '{p}'" for p in BANNED_PHRASES)
+THE GOLDEN RULE: Two lines that work as a pair — line 1 sets up, line 2 lands.
+Use exactly ONE pipe '|' to split them.
+
+FORMATS THAT GO VIRAL:
+1. Contrast: "came for the photo | stayed for the feeling"
+2. Earned admission: "didn't expect to cry here | but the ghats had other plans"
+3. Casual + deep: "stopped for 10 mins | it's been 3 hours"
+4. Specific detail: "the 4am aarti hits different | when you actually show up"
+5. Ironic: "came to see the temple | left questioning everything"
+6. Dry humor: "unhinged decision | 0 regrets"
+7. Honest + simple: "the beach, the dress | best call honestly"
+
+VOICE CHECK: Would a real person text this to a friend?
+If it sounds like a poem or Canva quote, rewrite it.
+
+RULES:
+- Write in ENGLISH ONLY. No Hindi, no Romanized Hindi, no mixed language.
+- NEVER describe what's visually on screen — evoke how it FEELS
+- NEVER sound like a translated Hindi song lyric
+- NO hashtags, NO emojis, NO punctuation except the pipe
+- Sounds like a real 22-year-old solo traveler, not a brand or AI
+
+BANNED PHRASES (never use):
+- anything with 'soul', 'heart takes off', 'silence hums', 'thoughts ripple'
+- nature doing human things: 'wake paints', 'soul drinks', 'lake whispers'
+- anything that could go on a sunset wallpaper
+- two random aesthetic words smashed together
+"""
+
+        CATEGORY_INJECT = {
+            "devotional": (
+                "CONTEXT: Temple / spiritual / aarti experience.\n"
+                "Tone: someone genuinely moved, not a tourist describing a monument.\n"
+                "Examples: 'came to check it off | left actually changed'\n"
+                "         'didn't plan to stay for aarti | couldn't leave after'\n"
+                "         'the bells, the smoke, the crowd | nothing prepares you'\n"
+            ),
+            "temple_travel": (
+                "CONTEXT: Travel content that includes temples or spiritual places.\n"
+                "Tone: wanderer with quiet reverence — not fully devotional, not fully tourist.\n"
+                "Examples: 'thought it was just a temple | it wasn't just a temple'\n"
+                "         'showed up for the architecture | stayed for the feeling'\n"
+            ),
+            "travel": (
+                "CONTEXT: Travel, outdoor, or lifestyle content.\n"
+                "Tone: solo traveler, slightly philosophical, occasionally funny.\n"
+                "Examples: 'said 10 minutes | it's been 2 hours'\n"
+                "         'rice fields at 6am | nobody warned me'\n"
+                "         'didn't plan this stop | best stop'\n"
+            ),
+            "generic": (
+                "CONTEXT: General lifestyle content.\n"
+                "Tone: relatable, slightly ironic, quietly real.\n"
+                "Examples: 'didn't plan this | but here we are'\n"
+                "         'came for content | left genuinely healed'\n"
+            ),
+        }
+
+        category = (
+            "devotional" if is_devotional else
+            "temple_travel" if is_temple_travel else
+            "travel" if is_travel_lifestyle else
+            "generic"
         )
+        if is_single_caption:
+            length_rule = (
+                "LENGTH: This is ONE caption for the whole reel. "
+                "Each line can be 5-8 words — a complete thought is fine.\n"
+            )
+        else:
+            length_rule = (
+                "LENGTH: Max 3-4 words per line. Fragments only. But each fragment must carry a REAL thought or feeling.\n\n"
+                "NOT two random aesthetic words.\n\n"
+                "ANTI-PATTERN WARNING: Do NOT use 'X ki/ka/ke Y | Z ka/ki/ke W' structure for every caption. "
+                "If more than 2 captions follow this pattern, you have failed. Vary the structure aggressively.\n\n"
+                "USE THESE DIFFERENT STRUCTURES (one per caption, rotate):\n"
+                "1. Reaction (e.g. 'didn't expect this | at all')\n"
+                "2. Confession (e.g. 'stopped here | never leaving')\n"
+                "3. Dry humor (e.g. 'unhinged decision | at 6am')\n"
+                "4. Single punch (e.g. 'window seat. that's it. that's the caption')\n"
+                "5. Honest take (e.g. 'the green dress was planned | the rain wasn't')\n"
+                "6. Short punchy statement (e.g. 'windows down | completely ready')\n"
+                "7. Time/specific (e.g. '7am river | nobody else there | perfection')\n\n"
+                "CRITICAL WARNING: DO NOT COPY OR REUSE THE ABOVE EXAMPLE STRINGS LITERALLY. "
+                "They are structural guidelines only. You MUST generate entirely unique content written specifically "
+                "about the clip's actual Location, Subjects, and Action (e.g. do not write about 'green dress' unless the clip features a dress; "
+                "do not write about 'rice fields' unless the clip features rice fields/fields).\n\n"
+                "Each caption should feel like it came from a DIFFERENT moment of a real trip — "
+                "not all written by the same poetic robot.\n"
+            )
 
+        caption_system = BASE_CAPTION_SYSTEM + "\n" + CATEGORY_INJECT[category] + "\n" + length_rule
 
         if is_single_caption:
             prompt_instruction = "1. Generate ONE SINGLE CAPTION that represents the vibe of the ENTIRE sequence of clips.\nOUTPUT: Return only the 1 caption line. Nothing else."
