@@ -28,6 +28,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env.example')) # Use
 
 from app.core.config import settings
 from app.core.database import Base
+import app.models  # Important: Import models so Base.metadata is populated
 
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 target_metadata = Base.metadata# other values from the config, defined by the needs of env.py,

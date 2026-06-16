@@ -2,6 +2,8 @@ import logging
 from fastapi import FastAPI
 from app.core.config import settings
 
+from app.api.routes import projects
+
 # Setup Basic Logging
 logging.basicConfig(
     level=logging.INFO,
@@ -20,4 +22,4 @@ async def health_check():
     """Basic health check endpoint"""
     return {"status": "ok", "project": settings.PROJECT_NAME}
 
-# TODO: Include routers from app.api.routes
+app.include_router(projects.router, prefix="/api/v1/projects", tags=["projects"])
