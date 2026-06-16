@@ -2,7 +2,7 @@ import logging
 from fastapi import FastAPI
 from app.core.config import settings
 
-from app.api.routes import projects
+from app.api.routes import projects, jobs
 
 # Setup Basic Logging
 logging.basicConfig(
@@ -23,3 +23,4 @@ async def health_check():
     return {"status": "ok", "project": settings.PROJECT_NAME}
 
 app.include_router(projects.router, prefix="/api/v1/projects", tags=["projects"])
+app.include_router(jobs.router, prefix="/api/v1", tags=["jobs"])

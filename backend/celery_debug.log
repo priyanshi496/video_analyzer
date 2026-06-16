@@ -1,0 +1,25 @@
+ 
+ -------------- celery@Priyanshis-MacBook-Air.local v5.6.3 (recovery)
+--- ***** ----- 
+-- ******* ---- macOS-26.3.1-arm64-arm-64bit-Mach-O 2026-06-16 17:34:45
+- *** --- * --- 
+- ** ---------- [config]
+- ** ---------- .> app:         video_analyzer:0x10c2f0ad0
+- ** ---------- .> transport:   redis://localhost:6379/0
+- ** ---------- .> results:     redis://localhost:6379/0
+- *** --- * --- .> concurrency: 10 (prefork)
+-- ******* ---- .> task events: OFF (enable -E to monitor tasks in this worker)
+--- ***** ----- 
+ -------------- [queues]
+                .> celery           exchange=celery(direct) key=celery
+                
+
+[tasks]
+  . app.services.pipeline_service.analyze_video_project
+
+[2026-06-16 17:34:46,267: INFO/MainProcess] Connected to redis://localhost:6379/0
+[2026-06-16 17:34:46,271: INFO/MainProcess] mingle: searching for neighbors
+[2026-06-16 17:34:47,290: INFO/MainProcess] mingle: all alone
+[2026-06-16 17:34:47,320: INFO/MainProcess] celery@Priyanshis-MacBook-Air.local ready.
+
+worker: Warm shutdown (MainProcess)
