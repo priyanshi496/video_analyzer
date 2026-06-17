@@ -46,7 +46,7 @@ class StorageService:
     def upload_log_text(self, text: str, object_key: str):
         import io
         file_obj = io.BytesIO(text.encode('utf-8'))
-        self.s3_client.upload_fileobj(file_obj, self.llm_logs_bucket, object_key, ExtraArgs={'ContentType': 'text/plain'})
+        self.s3_client.upload_fileobj(file_obj, self.llm_logs_bucket, object_key, ExtraArgs={'ContentType': 'text/markdown'})
         return object_key
         
 storage_service = StorageService()

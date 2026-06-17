@@ -337,7 +337,7 @@ def analyze_window(
     for attempt in range(1, 3):
         t0 = time.time()
         try:
-            raw = call_openrouter_multiimage(payload_images, prompt, api_key, CONFIG["model"])
+            raw = call_openrouter_multiimage(payload_images, prompt, CONFIG["model"])
             duration = time.time() - t0
             # Log successful API call (will update parsed/errors later)
             log_vision_call(
@@ -1144,7 +1144,6 @@ def run_full_analysis(
         try:
             raw_order    = call_openrouter_text(
                 story_prompt,
-                api_key, 
                 story_model,
                 fallbacks=[CONFIG.get("story_order_fallback")] if "story_order_fallback" in CONFIG else None
             )
@@ -1324,7 +1323,7 @@ def analyze_single_segment(video_path: str, start_sec: float, end_sec: float, ap
     payload_images = [f["path"] for f in frame_meta]
     prompt = build_single_segment_prompt(video_path, start_sec, end_sec, duration)
     
-    raw = call_openrouter_multiimage(payload_images, prompt, api_key, CONFIG["model"])
+    raw = call_openrouter_multiimage(payload_images, prompt, CONFIG["model"])
     parsed = parse_json_response(raw)
     if not isinstance(parsed, dict):
         raise ValueError("Parsed JSON is not a dictionary")
@@ -1398,8 +1397,18 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                 local_path = os.path.join(tmpdir, f"asset_{idx}.{ext}")
                 presigned = storage_service.generate_presigned_url(asset["storage_path"])
                 r = requests.get(presigned)
+                
+                if r.status_code != 200:
+                    logging.error(f"  ❌ Failed to download {asset.get('file_name', 'unknown')} (status={r.status_code}) from MinIO. Is the file missing?")
+                    continue
+                    
                 with open(local_path, "wb") as f:
                     f.write(r.content)
+                
+                # DEBUG
+                file_size = os.path.getsize(local_path)
+                logging.info(f"  📥 Downloaded {asset.get('file_name', 'unknown')} → {local_path} ({file_size} bytes, status={r.status_code})")
+                
                 video_paths.append(local_path)
                 
             video_infos = []
@@ -1408,49 +1417,62 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                 if info:
                     video_infos.append(info)
 
+            # --- QUALITY ANALYSIS ---
+            import sys
+            from pathlib import Path
+            root_dir = str(Path(__file__).resolve().parent.parent.parent.parent)
+            if root_dir not in sys.path:
+                sys.path.append(root_dir)
+            from quality import analyze_all_videos_quality
+            video_quality_map = analyze_all_videos_quality(video_infos)
+            # ------------------------
+
             total = len(video_infos)
             completed = [0]
             lock = threading.Lock()
-        def on_video_done():
-            with lock:
-                completed[0] += 1
-                p = 10 + int((completed[0] / total) * 70) if total else 80
-                update_progress(p)
+            def on_video_done():
+                with lock:
+                    completed[0] += 1
+                    p = 10 + int((completed[0] / total) * 70) if total else 80
+                    update_progress(p)
 
-        try:
-            final_segs = run_full_analysis(
-                video_infos,
-                api_key=None,
-                video_quality_map={},
-                reference_paths=[],
-                directives=directives,
-                progress_callback=on_video_done
-            )
-            
-            update_progress(90)
-            async def _save_results(segs):
-                async with TaskSessionLocal() as db:
-                    for idx, seg in enumerate(segs):
-                        clip = AnalyzedClip(
-                            job_id=job_uuid,
-                            media_asset_id=uuid.UUID(media_assets[seg["video_idx"]]["id"]),
-                            start_sec=seg["start_sec"],
-                            end_sec=seg["end_sec"],
-                            story_position=idx,
-                            metadata_json=seg,
-                            is_used=True
-                        )
-                        db.add(clip)
-                    await db.commit()
-            
-            loop.run_until_complete(_save_results(final_segs))
-            update_progress(100, JobStatus.COMPLETED)
-            
-        except Exception as e:
-            import traceback
-            err = traceback.format_exc()
-            update_progress(0, JobStatus.FAILED, error=str(e))
-            raise
+            try:
+                final_segs, _all_results = run_full_analysis(
+                    video_infos,
+                    api_key=settings.NVIDIA_API_KEY,
+                    video_quality_map=video_quality_map,
+                    reference_paths=[],
+                    directives=directives,
+                    progress_callback=on_video_done
+                )
+                
+                update_progress(90)
+                async def _save_results(segs):
+                    async with TaskSessionLocal() as db:
+                        for idx, seg in enumerate(segs):
+                            v_idx = int(seg.get("video_idx", 0))
+                            m_asset = media_assets[v_idx] if v_idx < len(media_assets) else media_assets[0]
+                            
+                            clip = AnalyzedClip(
+                                job_id=job_uuid,
+                                media_asset_id=uuid.UUID(str(m_asset["id"])),
+                                start_sec=float(seg.get("start_sec", 0.0)),
+                                end_sec=float(seg.get("end_sec", 0.0)),
+                                story_position=idx,
+                                metadata_json=seg,
+                                is_used=bool(seg.get("is_used", True))
+                            )
+                            db.add(clip)
+                        await db.commit()
+                
+                loop.run_until_complete(_save_results(final_segs))
+                update_progress(100, JobStatus.COMPLETED)
+                
+            except Exception as e:
+                import traceback
+                err = traceback.format_exc()
+                update_progress(0, JobStatus.FAILED, error=str(e))
+                raise
 
     finally:
         loop.run_until_complete(task_engine.dispose())

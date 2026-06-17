@@ -31,6 +31,7 @@ class AnalyzedClipResponse(BaseModel):
     end_sec: float
     story_position: int
     metadata_json: Dict[str, Any]
+    url: str | None = None
 
 @router.post("/projects/{project_id}/analyze", response_model=JobStatusResponse)
 async def start_analysis_job(
@@ -112,7 +113,11 @@ async def get_job_status(job_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
         err = traceback.format_exc()
         raise HTTPException(status_code=500, detail=str(err))
 
-@router.get("/projects/{project_id}/timeline", response_model=List[AnalyzedClipResponse])
+class TimelineResponse(BaseModel):
+    active_segments: List[AnalyzedClipResponse]
+    all_segments: List[AnalyzedClipResponse]
+
+@router.get("/projects/{project_id}/timeline", response_model=TimelineResponse)
 async def get_project_timeline(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     # Find the most recent completed job
     job_result = await db.execute(
@@ -125,31 +130,111 @@ async def get_project_timeline(project_id: uuid.UUID, db: AsyncSession = Depends
     if not job:
         raise HTTPException(status_code=404, detail="No completed analysis job found for this project")
 
-    # Get clips ordered by story_position
+    # Get clips ordered by story_position and load their media_assets
     clips_result = await db.execute(
         select(AnalyzedClip)
+        .options(selectinload(AnalyzedClip.media_asset))
         .filter(AnalyzedClip.job_id == job.id)
         .order_by(AnalyzedClip.story_position.asc())
     )
     clips = clips_result.scalars().all()
 
-    return [
-        AnalyzedClipResponse(
-            id=str(c.id),
-            media_asset_id=str(c.media_asset_id),
-            start_sec=c.start_sec,
-            end_sec=c.end_sec,
-            story_position=c.story_position or 0,
-            metadata_json=c.metadata_json or {}
+    all_segments = []
+    for c in clips:
+        clip_url = None
+        if c.media_asset and c.media_asset.object_key:
+            base_url = storage_service.generate_presigned_url(c.media_asset.object_key)
+            clip_url = f"{base_url}#t={c.start_sec},{c.end_sec}"
+            
+        all_segments.append(
+            AnalyzedClipResponse(
+                id=str(c.id),
+                media_asset_id=str(c.media_asset_id),
+                start_sec=c.start_sec,
+                end_sec=c.end_sec,
+                story_position=c.story_position or 0,
+                metadata_json=c.metadata_json or {},
+                url=clip_url
+            )
         )
-        for c in clips
-    ]
+        
+    active_segments = [c for c in all_segments if c.metadata_json.get("is_used", False)]
+    active_segments.sort(key=lambda x: x.story_position)
+
+    return TimelineResponse(
+        active_segments=active_segments,
+        all_segments=all_segments
+    )
 
 @router.get("/jobs/{job_id}/logs")
 async def get_job_logs(job_id: uuid.UUID):
-    # Retrieve the presigned url for the SUMMARY.txt log
-    object_key = f"logs/llm/{job_id}/SUMMARY.txt"
+    # Retrieve the presigned url for the SUMMARY.md log
+    object_key = f"logs/llm/{job_id}/SUMMARY.md"
     presigned = storage_service.generate_presigned_url(object_key, bucket=storage_service.llm_logs_bucket)
     if not presigned:
         raise HTTPException(status_code=404, detail="Log not found")
     return {"url": presigned}
+
+@router.get("/projects/{project_id}/active-segments/urls", response_model=List[str])
+async def get_active_segments_urls(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    # Find the most recent completed job
+    job_result = await db.execute(
+        select(AnalysisJob)
+        .filter(AnalysisJob.project_id == project_id, AnalysisJob.status == JobStatus.COMPLETED)
+        .order_by(AnalysisJob.created_at.desc())
+    )
+    job = job_result.scalars().first()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="No completed analysis job found for this project")
+
+    # Get clips ordered by story_position and load their media_assets
+    clips_result = await db.execute(
+        select(AnalyzedClip)
+        .options(selectinload(AnalyzedClip.media_asset))
+        .filter(AnalyzedClip.job_id == job.id)
+        .order_by(AnalyzedClip.story_position.asc())
+    )
+    clips = clips_result.scalars().all()
+
+    urls = []
+    for c in clips:
+        is_used = c.is_used or (c.metadata_json and c.metadata_json.get("is_used", False))
+        if is_used and c.media_asset and c.media_asset.object_key:
+            base_url = storage_service.generate_presigned_url(c.media_asset.object_key)
+            clip_url = f"{base_url}#t={c.start_sec},{c.end_sec}"
+            urls.append(clip_url)
+            
+    return urls
+
+@router.get("/projects/{project_id}/clips/urls", response_model=List[str])
+async def get_clips_urls(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    # Find the most recent completed job
+    job_result = await db.execute(
+        select(AnalysisJob)
+        .filter(AnalysisJob.project_id == project_id, AnalysisJob.status == JobStatus.COMPLETED)
+        .order_by(AnalysisJob.created_at.desc())
+    )
+    job = job_result.scalars().first()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="No completed analysis job found for this project")
+
+    # Get clips ordered by story_position and load their media_assets
+    clips_result = await db.execute(
+        select(AnalyzedClip)
+        .options(selectinload(AnalyzedClip.media_asset))
+        .filter(AnalyzedClip.job_id == job.id)
+        .order_by(AnalyzedClip.story_position.asc())
+    )
+    clips = clips_result.scalars().all()
+
+    urls = []
+    for c in clips:
+        if c.media_asset and c.media_asset.object_key:
+            base_url = storage_service.generate_presigned_url(c.media_asset.object_key)
+            clip_url = f"{base_url}#t={c.start_sec},{c.end_sec}"
+            urls.append(clip_url)
+            
+    return urls
+

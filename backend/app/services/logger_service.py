@@ -34,7 +34,7 @@ def log_llm_call(
 ) -> str:
     run_id = _get_run_id()
     safe_label = label.replace("/", "_").replace(" ", "_")[:80]
-    filename = f"{safe_label}_attempt{attempt}.txt"
+    filename = f"{safe_label}_attempt{attempt}.md"
     object_key = f"logs/llm/{run_id}/{filename}"
 
     input_tokens = _estimate_tokens(prompt)
@@ -99,8 +99,11 @@ def log_llm_call(
     sections.append(divider)
     text_content = "\n".join(sections)
     
+    # Wrap in markdown code block for clean preview
+    md_content = f"```text\n{text_content}\n```"
+    
     # Upload to MinIO
-    storage_service.upload_log_text(text_content, object_key)
+    storage_service.upload_log_text(md_content, object_key)
 
     status = "✓" if parsed else "✗"
     logging.info(
@@ -144,7 +147,7 @@ def write_run_summary(
     total_duration_sec: float,
 ) -> str:
     run_id = _get_run_id()
-    object_key = f"logs/llm/{run_id}/SUMMARY.txt"
+    object_key = f"logs/llm/{run_id}/SUMMARY.md"
 
     divider = "═" * 80
     lines = [
@@ -237,6 +240,7 @@ def write_run_summary(
     lines += ["", divider]
     text_content = "\n".join(lines)
     
-    storage_service.upload_log_text(text_content, object_key)
+    md_content = f"```text\n{text_content}\n```"
+    storage_service.upload_log_text(md_content, object_key)
     logging.info(f"  [logger_service] Run summary → {object_key}")
     return object_key

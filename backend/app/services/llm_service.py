@@ -107,31 +107,17 @@ def _post_with_retry(payload: dict, headers: dict, timeout: int, label: str = ""
         payload_copy["temperature"] = 0.0
         payload_copy["max_tokens"] = min(payload_copy.get("max_tokens", 2048), 2048)
 
-    if model_name.startswith("nvidia/") and not model_name.endswith(":free") and settings.NEMOTRON_API_KEY and not NVIDIA_UNHEALTHY:
+    if model_name.startswith("nvidia/") and not model_name.endswith(":free") and settings.NVIDIA_API_KEY and not NVIDIA_UNHEALTHY:
         url = "https://integrate.api.nvidia.com/v1/chat/completions"
         provider = "NVIDIA NIM"
-        target_key = settings.NEMOTRON_API_KEY
-        messages = payload_copy.get("messages", [])
-        if messages and messages[0].get("role") != "system":
-            system_msg = {
-                "role": "system",
-                "content": "Return only valid JSON matching the requested schema. Include best_segments at the root. No markdown, no code fences, no extra text. Your response must begin with { and end with }."
-            }
-            payload_copy["messages"] = [system_msg] + messages
+        target_key = settings.NVIDIA_API_KEY
     else:
         url = "https://openrouter.ai/api/v1/chat/completions"
         provider = "OpenRouter"
-        target_key = settings.OPENROUTER_API_KEY or settings.NEMOTRON_API_KEY
+        target_key = settings.OPENROUTER_API_KEY or settings.NVIDIA_API_KEY
         if model_name.startswith("nvidia/") and not model_name.endswith(":free") and NVIDIA_UNHEALTHY:
             payload_copy["model"] = f"{model_name}:free"
             logger.info(f"  🔀 NVIDIA circuit broken! Automatically re-routed to OpenRouter fallback model: {payload_copy['model']}")
-        messages = payload_copy.get("messages", [])
-        if messages and messages[0].get("role") != "system":
-            system_msg = {
-                "role": "system",
-                "content": "Return only valid JSON matching the requested schema. Include best_segments at the root. No markdown, no code fences, no extra text. Your response must begin with { and end with }."
-            }
-            payload_copy["messages"] = [system_msg] + messages
 
     req_headers = dict(headers)
     if target_key:
@@ -274,12 +260,22 @@ def call_openrouter_multiimage(
     if len(frame_paths) > limit:
         frame_paths = frame_paths[:limit]
 
+    # ── DEBUG: confirm frames exist and have real content ──────────────────
+    logger.info(f"  🖼  Preparing {len(frame_paths)} frame(s) for vision call:")
+    for p in frame_paths:
+        from pathlib import Path
+        ppath = Path(p)
+        exists = ppath.exists()
+        size = ppath.stat().st_size if exists else 0
+        logger.info(f"      {'✓' if exists and size > 0 else '✗'} {ppath.name}  exists={exists}  size={size}B")
+    # ───────────────────────────────────────────────────────────────────────
+
     content = [{"type": "text", "text": prompt}]
     for p in frame_paths:
         content.append({"type": "image_url", "image_url": {"url": to_data_url(p)}})
 
     headers = _build_headers(api_key)
-    models_to_try = [model, "google/gemini-flash-1.5-8b", "anthropic/claude-3-haiku"]
+    models_to_try = [model, "google/gemini-3.5-flash"]
     last_err = None
 
     for model_name in models_to_try:

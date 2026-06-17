@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     MINIO_BUCKET_NAME: str
     
     # APIs
-    NEMOTRON_API_KEY: str
+    NVIDIA_API_KEY: str
     OPENROUTER_API_KEY: str
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
