@@ -66,7 +66,7 @@ def test_auth_flow():
     print(f"SUCCESS: Current user verified: {me_resp.json().get('email')}")
 
     print("\n5. Accessing protected endpoint without token...")
-    no_token_resp = httpx.post(f"{BASE_URL}/projects/", json={"directives": "Test project"}, timeout=10.0)
+    no_token_resp = httpx.post(f"{BASE_URL}/projects/", json={"name": "Test project", "platform": "instagram_reels"}, timeout=10.0)
     if no_token_resp.status_code == 401:
         print("SUCCESS: Anonymous project creation correctly blocked with 401 Unauthorized.")
     else:
@@ -76,10 +76,11 @@ def test_auth_flow():
     print("\n6. Creating project with valid token...")
     proj_resp = httpx.post(
         f"{BASE_URL}/projects/",
-        json={"directives": "Authenticated test project"},
+        json={"name": "Authenticated test project", "platform": "instagram_reels"},
         headers=headers,
         timeout=10.0
     )
+
     if proj_resp.status_code != 201:
         print(f"FAIL: Project creation failed with status {proj_resp.status_code}: {proj_resp.text}")
         sys.exit(1)
@@ -88,7 +89,24 @@ def test_auth_flow():
     project_id = proj_data.get("id")
     print(f"SUCCESS: Project created: {project_id}")
 
-    print("\n7. Accessing another user's project (simulated via anonymous or invalid header)...")
+    print("\n7. Patching/updating project name and platform...")
+    patch_resp = httpx.patch(
+        f"{BASE_URL}/projects/{project_id}",
+        json={"name": "Renamed project", "platform": "youtube_shorts"},
+        headers=headers,
+        timeout=10.0
+    )
+    if patch_resp.status_code != 200:
+        print(f"FAIL: Project patch failed with status {patch_resp.status_code}: {patch_resp.text}")
+        sys.exit(1)
+    
+    updated_data = patch_resp.json()
+    if updated_data.get("name") != "Renamed project" or updated_data.get("platform") != "youtube_shorts":
+        print(f"FAIL: Project patch did not update name or platform correctly: {updated_data}")
+        sys.exit(1)
+    print("SUCCESS: Project patched successfully.")
+
+    print("\n8. Accessing another user's project (simulated via anonymous or invalid header)...")
     bad_headers = {"Authorization": "Bearer invalidtoken123"}
     bad_resp = httpx.get(f"{BASE_URL}/projects/{project_id}/media", headers=bad_headers, timeout=10.0)
     if bad_resp.status_code == 401:
@@ -96,6 +114,7 @@ def test_auth_flow():
     else:
         print(f"FAIL: Access with invalid token allowed or returned status {bad_resp.status_code}")
         sys.exit(1)
+
 
     print("\nALL AUTHENTICATION FLOW TESTS PASSED SUCCESSFULLY!")
 

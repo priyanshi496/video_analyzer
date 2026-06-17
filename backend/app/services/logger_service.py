@@ -1,12 +1,14 @@
+from __future__ import annotations
 import json
 import logging
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from app.services.storage_service import storage_service
 
-_run_id: str | None = None
+_run_id: Optional[str] = None
 
 def init_run_log_dir(job_id: str) -> str:
     global _run_id
@@ -27,8 +29,8 @@ def log_llm_call(
     model: str,
     prompt: str,
     raw_response: str,
-    parsed: dict | None,
-    parse_error: str | None = None,
+    parsed: Optional[dict],
+    parse_error: Optional[str] = None,
     attempt: int = 1,
     duration_sec: float = 0.0,
 ) -> str:
@@ -119,8 +121,8 @@ def log_vision_call(
     model: str,
     prompt: str,
     raw_response: str,
-    parsed: dict | None,
-    parse_error: str | None = None,
+    parsed: Optional[dict],
+    parse_error: Optional[str] = None,
     attempt: int = 1,
     duration_sec: float = 0.0,
     chunk_label: str = "",
@@ -133,8 +135,8 @@ def log_story_order_call(
     model: str,
     prompt: str,
     raw_response: str,
-    parsed: dict | None,
-    parse_error: str | None = None,
+    parsed: Optional[dict],
+    parse_error: Optional[str] = None,
     attempt: int = 1,
     duration_sec: float = 0.0,
 ) -> str:
@@ -143,7 +145,7 @@ def log_story_order_call(
 def write_run_summary(
     all_results: list,
     final_segments: list,
-    story_order: list | None,
+    story_order: Optional[list],
     total_duration_sec: float,
 ) -> str:
     run_id = _get_run_id()
