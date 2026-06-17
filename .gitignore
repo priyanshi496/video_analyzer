@@ -18,7 +18,7 @@ projects/
 OpenMontage/remotion-composer/src/my_reel.json
 
 # Standard Python & OS files
-.venv/
+venv/
 .env
 __pycache__/
 *.pyc

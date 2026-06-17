@@ -287,7 +287,7 @@ CRITICAL RULES:
     fallbacks = [CONFIG.get("story_order_fallback", "openai/gpt-oss-120b:free")]
     try:
         logging.info("  🔧 Triggering LLM schema repair for malformed response...")
-        return call_openrouter_text(prompt, api_key, model=text_model, fallbacks=fallbacks)
+        return call_openrouter_text(prompt, model=text_model, fallbacks=fallbacks)
     except Exception as e:
         logging.warning(f"  ✗ Text-repair call failed: {e}")
         raise e
@@ -318,6 +318,10 @@ def analyze_window(
         logging.info(f"  ✗ No frames for {info['path']} [{offset_sec}s–{offset_sec+window_sec:.1f}s] → quality-guided fallback")
         return [], make_fallback_analysis(info, offset_sec, window_sec, video_quality_map)
 
+    # Log successful frame extraction
+    interval = window_sec / len(frame_meta)
+    logging.info(f"  📸 Extracted {len(frame_meta)} frames from [{offset_sec:.1f}s–{offset_sec+window_sec:.1f}s] (1 frame every ~{interval:.1f}s)")
+
     limit     = CONFIG["image_limit_per_request"]
     ref_cap   = CONFIG["max_reference_images"]
     ref_slots = limit - len(frame_meta)
@@ -337,7 +341,7 @@ def analyze_window(
     for attempt in range(1, 3):
         t0 = time.time()
         try:
-            raw = call_openrouter_multiimage(payload_images, prompt, api_key, CONFIG["model"])
+            raw = call_openrouter_multiimage(payload_images, prompt, CONFIG["model"])
             duration = time.time() - t0
             # Log successful API call (will update parsed/errors later)
             log_vision_call(
@@ -874,7 +878,7 @@ def run_full_analysis(
     pipeline_start_time = time.time()
 
     logging.info(f"\n{'='*60}")
-    logging.info(f"Analyzing {len(video_infos)} video(s) in parallel...")
+    logging.info(f"Analyzing {len(video_infos)} video(s) in parallel using model: {CONFIG.get('model', 'unknown')}")
     logging.info(f"{'='*60}")
 
     max_workers = min(len(video_infos) or 1, CONFIG.get("max_parallel_vision_calls", 3))
@@ -1136,16 +1140,15 @@ def run_full_analysis(
     story_reasoning = ""
 
     if len(survived) >= 2 and not use_uploaded_order:
-        logging.info("\nRequesting story order from model...")
+        story_model = CONFIG.get("story_order_model", CONFIG["model"])
+        logging.info(f"\nRequesting story order from model: {story_model}...")
         story_prompt = build_story_order_prompt(survived, all_results, directives, focus)
         t0 = time.time()
         raw_order = None
-        story_model = CONFIG.get("story_order_model", CONFIG["model"])
         try:
             raw_order    = call_openrouter_text(
                 story_prompt,
-                api_key, 
-                story_model,
+                model=story_model,
                 fallbacks=[CONFIG.get("story_order_fallback")] if "story_order_fallback" in CONFIG else None
             )
             duration = time.time() - t0
@@ -1324,7 +1327,7 @@ def analyze_single_segment(video_path: str, start_sec: float, end_sec: float, ap
     payload_images = [f["path"] for f in frame_meta]
     prompt = build_single_segment_prompt(video_path, start_sec, end_sec, duration)
     
-    raw = call_openrouter_multiimage(payload_images, prompt, api_key, CONFIG["model"])
+    raw = call_openrouter_multiimage(payload_images, prompt, CONFIG["model"])
     parsed = parse_json_response(raw)
     if not isinstance(parsed, dict):
         raise ValueError("Parsed JSON is not a dictionary")
@@ -1401,56 +1404,64 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                 with open(local_path, "wb") as f:
                     f.write(r.content)
                 video_paths.append(local_path)
+                logging.info(f"  ✓ Downloaded asset {idx+1}/{len(media_assets)}: {asset.get('file_name','')}")
+                update_progress(10 + int(((idx + 1) / len(media_assets)) * 5))
                 
             video_infos = []
             for vp in video_paths:
                 info = get_video_info(vp)
                 if info:
                     video_infos.append(info)
+                    logging.info(f"  ✓ Video info: {vp} | duration={info['duration_sec']:.1f}s | fps={info['fps']:.1f} | frames={info['total_frames']}")
 
             total = len(video_infos)
             completed = [0]
             lock = threading.Lock()
-        def on_video_done():
-            with lock:
-                completed[0] += 1
-                p = 10 + int((completed[0] / total) * 70) if total else 80
-                update_progress(p)
 
-        try:
-            final_segs = run_full_analysis(
-                video_infos,
-                api_key=None,
-                video_quality_map={},
-                reference_paths=[],
-                directives=directives,
-                progress_callback=on_video_done
-            )
+            def on_video_done():
+                with lock:
+                    completed[0] += 1
+                    p = 15 + int((completed[0] / total) * 70) if total else 85
+                    update_progress(p)
+                    logging.info(f"  ✓ Completed {completed[0]}/{total} videos (progress={p}%)")
+
+            try:
+                result_tuple = run_full_analysis(
+                    video_infos,
+                    api_key=settings.NEMOTRON_API_KEY,
+                    video_quality_map={},
+                    reference_paths=[],
+                    directives=directives,
+                    progress_callback=on_video_done
+                )
+                final_segs = result_tuple[0]  # (ordered_segs, all_results)
             
-            update_progress(90)
-            async def _save_results(segs):
-                async with TaskSessionLocal() as db:
-                    for idx, seg in enumerate(segs):
-                        clip = AnalyzedClip(
-                            job_id=job_uuid,
-                            media_asset_id=uuid.UUID(media_assets[seg["video_idx"]]["id"]),
-                            start_sec=seg["start_sec"],
-                            end_sec=seg["end_sec"],
-                            story_position=idx,
-                            metadata_json=seg,
-                            is_used=True
-                        )
-                        db.add(clip)
-                    await db.commit()
-            
-            loop.run_until_complete(_save_results(final_segs))
-            update_progress(100, JobStatus.COMPLETED)
-            
-        except Exception as e:
-            import traceback
-            err = traceback.format_exc()
-            update_progress(0, JobStatus.FAILED, error=str(e))
-            raise
+                update_progress(90)
+                async def _save_results(segs):
+                    async with TaskSessionLocal() as db:
+                        for idx, seg in enumerate(segs):
+                            clip = AnalyzedClip(
+                                job_id=job_uuid,
+                                media_asset_id=uuid.UUID(media_assets[int(seg["video_idx"])]["id"]),
+                                start_sec=seg["start_sec"],
+                                end_sec=seg["end_sec"],
+                                story_position=idx,
+                                metadata_json=seg,
+                                is_used=True
+                            )
+                            db.add(clip)
+                        await db.commit()
+                
+                loop.run_until_complete(_save_results(final_segs))
+                update_progress(100, JobStatus.COMPLETED)
+                logging.info(f"  ✅ Job {job_id} completed with {len(final_segs)} segments.")
+                
+            except Exception as e:
+                import traceback
+                err = traceback.format_exc()
+                logging.error(f"  ✗ Pipeline error: {err}")
+                update_progress(0, JobStatus.FAILED, error=str(e))
+                raise
 
     finally:
         loop.run_until_complete(task_engine.dispose())

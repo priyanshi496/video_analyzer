@@ -28,10 +28,25 @@ class StorageService:
 
     def generate_presigned_url(self, object_key: str, expiration: int = 3600, bucket: str = None) -> str:
         target_bucket = bucket or self.bucket_name
+        
+        # Determine if we should force a specific content type for preview
+        response_content_type = None
+        if object_key.endswith('.txt'):
+            response_content_type = 'text/plain; charset=utf-8'
+        elif object_key.endswith('.json'):
+            response_content_type = 'application/json; charset=utf-8'
+            
+        params = {
+            'Bucket': target_bucket,
+            'Key': object_key
+        }
+        if response_content_type:
+            params['ResponseContentType'] = response_content_type
+            params['ResponseContentDisposition'] = 'inline'
+            
         try:
             response = self.s3_client.generate_presigned_url('get_object',
-                                                            Params={'Bucket': target_bucket,
-                                                                    'Key': object_key},
+                                                            Params=params,
                                                             ExpiresIn=expiration)
         except ClientError as e:
             logger.error(e)
@@ -46,7 +61,7 @@ class StorageService:
     def upload_log_text(self, text: str, object_key: str):
         import io
         file_obj = io.BytesIO(text.encode('utf-8'))
-        self.s3_client.upload_fileobj(file_obj, self.llm_logs_bucket, object_key, ExtraArgs={'ContentType': 'text/plain'})
+        self.s3_client.upload_fileobj(file_obj, self.llm_logs_bucket, object_key, ExtraArgs={'ContentType': 'text/plain; charset=utf-8'})
         return object_key
         
 storage_service = StorageService()

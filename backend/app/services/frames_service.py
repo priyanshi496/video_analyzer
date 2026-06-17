@@ -1,4 +1,6 @@
+from __future__ import annotations
 import logging
+import tempfile
 """
 frames.py — Extract representative frames from a video window.
 
@@ -9,6 +11,21 @@ already-extracted frames (zero extra I/O cost).
 import cv2
 import numpy as np
 from pathlib import Path
+
+
+def _heic_to_jpeg(heic_path: str) -> str:
+    """Convert a HEIC file to a temp JPEG and return the temp path."""
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+        from PIL import Image
+        img = Image.open(heic_path)
+        tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+        img.convert("RGB").save(tmp.name, "JPEG", quality=90)
+        return tmp.name
+    except Exception as e:
+        logging.warning(f"  ⚠️  HEIC conversion failed for {heic_path}: {e}")
+        return heic_path
 
 FRAMES_DIR = Path("timeline_frames")
 FRAMES_DIR.mkdir(exist_ok=True)
@@ -45,7 +62,10 @@ def extract_representative_frames(
     FRAMES_DIR.mkdir(exist_ok=True, parents=True)
     is_image = Path(video_path).suffix.lower() in (".jpg", ".jpeg", ".png", ".heic")
     if is_image:
-        frame = cv2.imread(video_path)
+        read_path = video_path
+        if Path(video_path).suffix.lower() == ".heic":
+            read_path = _heic_to_jpeg(video_path)
+        frame = cv2.imread(read_path)
         if frame is None:
             logging.info(f"  ✗ Could not read image {video_path}")
             return []
