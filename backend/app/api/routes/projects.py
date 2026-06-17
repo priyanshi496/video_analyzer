@@ -3,15 +3,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from typing import List
 import uuid
+import os
+import tempfile
+import shutil
+from pathlib import Path
 
 from app.core.database import get_db
 from app.models.domain import Project, MediaAsset, User
-from app.schemas.project import ProjectCreate, ProjectResponse
+from app.schemas.project import ProjectCreate, ProjectResponse, ProjectUpdate
 from app.schemas.media import MediaAssetResponse, MediaAssetWithUrlResponse
 from app.services.storage_service import storage_service
 from app.core.security import get_current_user
+from app.services.pipeline_service import get_video_info
 
 router = APIRouter()
+
 
 @router.post("/", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(
@@ -19,11 +25,49 @@ async def create_project(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    new_project = Project(directives=project_in.directives, user_id=current_user.id)
+    import secrets
+    name = project_in.name
+    if not name:
+        name = f"untitled-project-{secrets.token_hex(3)}"
+
+    new_project = Project(
+        name=name,
+        platform=project_in.platform,
+        user_id=current_user.id
+    )
     db.add(new_project)
     await db.commit()
     await db.refresh(new_project)
     return new_project
+
+@router.patch("/{project_id}", response_model=ProjectResponse)
+async def update_project(
+    project_id: uuid.UUID,
+    project_in: ProjectUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Verify project exists and belongs to the user (or is unowned)
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            or_(Project.user_id == current_user.id, Project.user_id == None)
+        )
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project_in.name is not None:
+        project.name = project_in.name
+    if project_in.platform is not None:
+        project.platform = project_in.platform
+
+    await db.commit()
+    await db.refresh(project)
+    return project
+
+
 
 import asyncio
 
@@ -53,6 +97,40 @@ async def upload_media(
     next_seq = seq_result.scalar() + 1
 
     async def process_file(file: UploadFile, seq_idx: int):
+        # Write to temporary file to extract metadata
+        suffix = Path(file.filename).suffix
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = tmp.name
+
+        # Reset file pointer for uploading to MinIO
+        file.file.seek(0)
+
+        # Get metadata using get_video_info
+        duration = None
+        width = None
+        height = None
+        fps = None
+        total_frames = None
+        is_image = False
+        try:
+            info = get_video_info(tmp_path)
+            if info:
+                duration = info.get("duration_sec")
+                width = info.get("width")
+                height = info.get("height")
+                fps = info.get("fps")
+                total_frames = info.get("total_frames")
+                is_image = info.get("is_image", False)
+        except Exception as e:
+            logging = __import__("logging")
+            logging.warning(f"Could not extract video metadata for {file.filename}: {e}")
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
         object_key = f"projects/{project_id}/media/{uuid.uuid4()}_{file.filename}"
         await asyncio.to_thread(storage_service.upload_file_obj, file.file, object_key, file.content_type)
         url = storage_service.generate_presigned_url(object_key)
@@ -64,10 +142,18 @@ async def upload_media(
                 filename=file.filename,
                 object_key=object_key,
                 file_size_bytes=file.size,
-                mime_type=file.content_type
+                mime_type=file.content_type,
+                duration_sec=duration,
+                width=width,
+                height=height,
+                fps=fps,
+                total_frames=total_frames,
+                is_image=is_image
             ),
             "url": url
         }
+
+
 
     # Upload all files to MinIO in parallel
     tasks = [process_file(file, next_seq + i) for i, file in enumerate(files)]
