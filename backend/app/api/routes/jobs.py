@@ -2,14 +2,16 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any
 import uuid
+from sqlalchemy import or_
 
 from app.core.database import get_db
-from app.models.domain import Project, AnalysisJob, AnalyzedClip, JobStatus
+from app.models.domain import Project, AnalysisJob, AnalyzedClip, JobStatus, User
 from app.services.pipeline_service import analyze_video_project
 from app.services.storage_service import storage_service
 from pydantic import BaseModel
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
+from app.core.security import get_current_user
 
 router = APIRouter()
 
@@ -37,13 +39,14 @@ class AnalyzedClipResponse(BaseModel):
 async def start_analysis_job(
     project_id: uuid.UUID,
     request: AnalyzeRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     try:
         project_result = await db.execute(
             select(Project)
             .options(selectinload(Project.media_assets))
-            .filter(Project.id == project_id)
+            .filter(Project.id == project_id, or_(Project.user_id == current_user.id, Project.user_id == None))
         )
         project = project_result.scalar_one_or_none()
         
@@ -87,15 +90,25 @@ async def start_analysis_job(
             error_message=job.error_message,
             created_at=str(job.created_at)
         )
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         err = traceback.format_exc()
         raise HTTPException(status_code=500, detail=str(err))
 
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
-async def get_job_status(job_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_job_status(
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     try:
-        job_result = await db.execute(select(AnalysisJob).filter(AnalysisJob.id == job_id))
+        job_result = await db.execute(
+            select(AnalysisJob)
+            .join(Project, Project.id == AnalysisJob.project_id)
+            .filter(AnalysisJob.id == job_id, or_(Project.user_id == current_user.id, Project.user_id == None))
+        )
         job = job_result.scalar_one_or_none()
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -108,6 +121,8 @@ async def get_job_status(job_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
             error_message=job.error_message,
             created_at=str(job.created_at)
         )
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         err = traceback.format_exc()
@@ -118,7 +133,18 @@ class TimelineResponse(BaseModel):
     all_segments: List[AnalyzedClipResponse]
 
 @router.get("/projects/{project_id}/timeline", response_model=TimelineResponse)
-async def get_project_timeline(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_project_timeline(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Verify project belongs to user
+    proj_result = await db.execute(
+        select(Project).filter(Project.id == project_id, or_(Project.user_id == current_user.id, Project.user_id == None))
+    )
+    if not proj_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Project not found")
+
     # Find the most recent completed job
     job_result = await db.execute(
         select(AnalysisJob)
@@ -167,7 +193,21 @@ async def get_project_timeline(project_id: uuid.UUID, db: AsyncSession = Depends
     )
 
 @router.get("/jobs/{job_id}/logs")
-async def get_job_logs(job_id: uuid.UUID):
+async def get_job_logs(
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Verify job ownership
+    job_result = await db.execute(
+        select(AnalysisJob)
+        .join(Project, Project.id == AnalysisJob.project_id)
+        .filter(AnalysisJob.id == job_id, or_(Project.user_id == current_user.id, Project.user_id == None))
+    )
+    job = job_result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
     # Retrieve the presigned url for the SUMMARY.md log
     object_key = f"logs/llm/{job_id}/SUMMARY.md"
     presigned = storage_service.generate_presigned_url(object_key, bucket=storage_service.llm_logs_bucket)
@@ -176,7 +216,18 @@ async def get_job_logs(job_id: uuid.UUID):
     return {"url": presigned}
 
 @router.get("/projects/{project_id}/active-segments/urls", response_model=List[str])
-async def get_active_segments_urls(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_active_segments_urls(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Verify project ownership
+    proj_result = await db.execute(
+        select(Project).filter(Project.id == project_id, or_(Project.user_id == current_user.id, Project.user_id == None))
+    )
+    if not proj_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Project not found")
+
     # Find the most recent completed job
     job_result = await db.execute(
         select(AnalysisJob)
@@ -208,7 +259,18 @@ async def get_active_segments_urls(project_id: uuid.UUID, db: AsyncSession = Dep
     return urls
 
 @router.get("/projects/{project_id}/clips/urls", response_model=List[str])
-async def get_clips_urls(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_clips_urls(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Verify project ownership
+    proj_result = await db.execute(
+        select(Project).filter(Project.id == project_id, or_(Project.user_id == current_user.id, Project.user_id == None))
+    )
+    if not proj_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Project not found")
+
     # Find the most recent completed job
     job_result = await db.execute(
         select(AnalysisJob)
@@ -237,4 +299,5 @@ async def get_clips_urls(project_id: uuid.UUID, db: AsyncSession = Depends(get_d
             urls.append(clip_url)
             
     return urls
+
 
