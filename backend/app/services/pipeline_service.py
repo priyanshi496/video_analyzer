@@ -1345,7 +1345,7 @@ from app.models.domain import AnalysisJob, AnalyzedClip, JobStatus
 from app.services.storage_service import storage_service
 
 @celery_app.task(bind=True)
-def analyze_video_project(self, project_id: str, job_id: str, media_assets: list, directives: str = ""):
+def analyze_video_project(self, project_id: str, job_id: str, media_assets: list, directives: str = "", vibe: str = "cinematic"):
     import uuid
     import asyncio
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
@@ -1381,6 +1381,7 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
         update_progress(5, JobStatus.RUNNING)
         from app.services.logger_service import init_run_log_dir
         init_run_log_dir(job_id)
+        logging.info(f"  🎬 [Pipeline] Starting analysis | vibe={vibe!r} | directives={directives!r}")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             import os

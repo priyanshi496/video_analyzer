@@ -1,6 +1,7 @@
+from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import uuid
 from sqlalchemy import or_
 
@@ -8,6 +9,7 @@ from app.core.database import get_db
 from app.models.domain import Project, AnalysisJob, AnalyzedClip, JobStatus, User
 from app.services.pipeline_service import analyze_video_project
 from app.services.storage_service import storage_service
+from app.core.vibe_config import VibePreset
 from pydantic import BaseModel
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -16,14 +18,15 @@ from app.core.security import get_current_user
 router = APIRouter()
 
 class AnalyzeRequest(BaseModel):
-    directives: str = ""
+    vibe: VibePreset = VibePreset.CINEMATIC  # Preset vibe for the reel
+    directives: str = ""                    # Custom free-form description (overrides/supplements vibe hint)
 
 class JobStatusResponse(BaseModel):
     id: str
     project_id: str
     status: JobStatus
     progress: int
-    error_message: str | None = None
+    error_message: Optional[str] = None
     created_at: str
 
 class AnalyzedClipResponse(BaseModel):
@@ -33,7 +36,7 @@ class AnalyzedClipResponse(BaseModel):
     end_sec: float
     story_position: int
     metadata_json: Dict[str, Any]
-    url: str | None = None
+    url: Optional[str] = None
 
 @router.post("/projects/{project_id}/analyze", response_model=JobStatusResponse)
 async def start_analysis_job(
@@ -59,7 +62,8 @@ async def start_analysis_job(
         job = AnalysisJob(
             project_id=project_id,
             status=JobStatus.PENDING,
-            progress=0
+            progress=0,
+            vibe=request.vibe.value
         )
         db.add(job)
         await db.commit()
@@ -79,7 +83,8 @@ async def start_analysis_job(
             project_id=str(project_id),
             job_id=str(job.id),
             media_assets=assets_data,
-            directives=request.directives
+            directives=request.directives,
+            vibe=request.vibe.value
         )
 
         return JobStatusResponse(
