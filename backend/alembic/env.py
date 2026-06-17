@@ -24,7 +24,11 @@ from dotenv import load_dotenv
 
 # Add backend directory to path so 'app' can be imported
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env.example')) # Use .env.example if .env not present for alembic generation
+env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+if os.path.exists(env_path):
+    load_dotenv(env_path)
+else:
+    load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env.example'))
 
 from app.core.config import settings
 from app.core.database import Base

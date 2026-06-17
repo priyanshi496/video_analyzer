@@ -93,6 +93,7 @@ class AnalysisJob(Base):
     retry_count = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
     pipeline_version = Column(String, default="v1")
+    vibe = Column(String, nullable=True, default="cinematic")  # VibePreset value stored as string
     selected_clip_count = Column(Integer, default=0)
     total_runtime_sec = Column(Float, default=0.0)
     sequence_rationale = Column(Text, nullable=True)
