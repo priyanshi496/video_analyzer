@@ -3,6 +3,7 @@ import os
 # Fix macOS Objective-C threading crash during multiprocessing fork
 os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
 
+# pyrefly: ignore [missing-import]
 from celery import Celery
 from app.core.config import settings
 

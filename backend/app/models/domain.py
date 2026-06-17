@@ -32,19 +32,27 @@ class User(Base):
 
     projects = relationship("Project", back_populates="user")
 
+class PlatformType(str, enum.Enum):
+    INSTAGRAM_STORY = "instagram_story"
+    INSTAGRAM_REELS = "instagram_reels"
+    YOUTUBE_SHORTS = "youtube_shorts"
+    TIKTOK = "tiktok"
+
 class Project(Base):
     __tablename__ = "projects"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    name = Column(String, nullable=False)
+    platform = Column(Enum(PlatformType), nullable=True)
     status = Column(Enum(ProjectStatus), default=ProjectStatus.CREATED, nullable=False)
-    directives = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     media_assets = relationship("MediaAsset", back_populates="project")
     analysis_jobs = relationship("AnalysisJob", back_populates="project")
     user = relationship("User", back_populates="projects")
+
 
 
 class MediaAsset(Base):
@@ -58,9 +66,15 @@ class MediaAsset(Base):
     file_size_bytes = Column(BigInteger, nullable=True)
     mime_type = Column(String, nullable=True)
     duration_sec = Column(Float, nullable=True)
+    width = Column(Integer, nullable=True)
+    height = Column(Integer, nullable=True)
+    fps = Column(Float, nullable=True)
+    total_frames = Column(Integer, nullable=True)
+    is_image = Column(Boolean, default=False, nullable=False)
     is_deleted = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
 
     __table_args__ = (
         UniqueConstraint("project_id", "sequence_index", name="uq_project_media_sequence"),
