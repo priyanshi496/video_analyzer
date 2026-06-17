@@ -1,20 +1,25 @@
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from typing import List
 import uuid
 
 from app.core.database import get_db
-from app.models.domain import Project, MediaAsset
+from app.models.domain import Project, MediaAsset, User
 from app.schemas.project import ProjectCreate, ProjectResponse
 from app.schemas.media import MediaAssetResponse, MediaAssetWithUrlResponse
 from app.services.storage_service import storage_service
+from app.core.security import get_current_user
 
 router = APIRouter()
 
 @router.post("/", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
-async def create_project(project_in: ProjectCreate, db: AsyncSession = Depends(get_db)):
-    new_project = Project(directives=project_in.directives)
+async def create_project(
+    project_in: ProjectCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    new_project = Project(directives=project_in.directives, user_id=current_user.id)
     db.add(new_project)
     await db.commit()
     await db.refresh(new_project)
@@ -26,10 +31,16 @@ import asyncio
 async def upload_media(
     project_id: uuid.UUID,
     files: List[UploadFile] = File(...),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    # Verify project exists
-    result = await db.execute(select(Project).where(Project.id == project_id))
+    # Verify project exists and belongs to the user (or is unowned)
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            or_(Project.user_id == current_user.id, Project.user_id == None)
+        )
+    )
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -81,9 +92,18 @@ async def upload_media(
     return response
 
 @router.get("/{project_id}/media", response_model=List[MediaAssetWithUrlResponse])
-async def list_media(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    # Verify project exists
-    result = await db.execute(select(Project).where(Project.id == project_id))
+async def list_media(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Verify project exists and belongs to the user (or is unowned)
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            or_(Project.user_id == current_user.id, Project.user_id == None)
+        )
+    )
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -103,3 +123,4 @@ async def list_media(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
         response.append(MediaAssetWithUrlResponse(**asset_dict))
 
     return response
+
