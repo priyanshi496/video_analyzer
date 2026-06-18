@@ -28,6 +28,7 @@ class JobStatusResponse(BaseModel):
     progress: int
     error_message: Optional[str] = None
     created_at: str
+    final_video_url: Optional[str] = None
 
 class AnalyzedClipResponse(BaseModel):
     id: str
@@ -93,7 +94,8 @@ async def start_analysis_job(
             status=job.status,
             progress=job.progress,
             error_message=job.error_message,
-            created_at=str(job.created_at)
+            created_at=str(job.created_at),
+            final_video_url=None
         )
     except HTTPException:
         raise
@@ -118,13 +120,19 @@ async def get_job_status(
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
+        final_video_url = None
+        if job.status == JobStatus.COMPLETED:
+            object_key = f"projects/{job.project_id}/jobs/{job.id}/final_video.mp4"
+            final_video_url = storage_service.generate_presigned_url(object_key)
+
         return JobStatusResponse(
             id=str(job.id),
             project_id=str(job.project_id),
             status=job.status,
             progress=job.progress,
             error_message=job.error_message,
-            created_at=str(job.created_at)
+            created_at=str(job.created_at),
+            final_video_url=final_video_url
         )
     except HTTPException:
         raise
@@ -136,6 +144,7 @@ async def get_job_status(
 class TimelineResponse(BaseModel):
     active_segments: List[AnalyzedClipResponse]
     all_segments: List[AnalyzedClipResponse]
+    final_video_url: Optional[str] = None
 
 @router.get("/projects/{project_id}/timeline", response_model=TimelineResponse)
 async def get_project_timeline(
@@ -192,9 +201,13 @@ async def get_project_timeline(
     active_segments = [c for c in all_segments if c.metadata_json.get("is_used", False)]
     active_segments.sort(key=lambda x: x.story_position)
 
+    final_video_key = f"projects/{project_id}/jobs/{job.id}/final_video.mp4"
+    final_video_url = storage_service.generate_presigned_url(final_video_key)
+
     return TimelineResponse(
         active_segments=active_segments,
-        all_segments=all_segments
+        all_segments=all_segments,
+        final_video_url=final_video_url
     )
 
 @router.get("/jobs/{job_id}/logs")

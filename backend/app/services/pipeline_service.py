@@ -38,7 +38,7 @@ CONFIG = {
         "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
         "google/gemma-4-31b-it:free",
     ],
-    "max_tokens_vision": 2048,
+    "max_tokens_vision": 4096,
     "max_tokens_text":   1000,
     "story_order_model":    "openai/gpt-oss-120b:free",
     "story_order_fallback": "meta-llama/llama-3-8b-instruct:free",
@@ -286,8 +286,8 @@ CRITICAL RULES:
     text_model = CONFIG.get("story_order_model", "openrouter/owl-alpha")
     fallbacks = [CONFIG.get("story_order_fallback", "openai/gpt-oss-120b:free")]
     try:
-        logging.info("  🔧 Triggering LLM schema repair for malformed response...")
-        return call_openrouter_text(prompt, api_key, model=text_model, fallbacks=fallbacks)
+        logging.info("  [Repair] Triggering LLM schema repair for malformed response...")
+        return call_openrouter_text(prompt, model=text_model, fallbacks=fallbacks)
     except Exception as e:
         logging.warning(f"  ✗ Text-repair call failed: {e}")
         raise e
@@ -1467,6 +1467,30 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                         await db.commit()
                 
                 loop.run_until_complete(_save_results(final_segs))
+                
+                # Stitch the segments into a final video summary and upload to MinIO
+                logging.info("  🎬 [Pipeline] Generating final stitched video summary...")
+                clips_dir = Path(tmpdir) / "clips"
+                reel_path = Path(tmpdir) / "final_video.mp4"
+                
+                # Ensure root_dir is in sys.path
+                import sys
+                root_dir = str(Path(__file__).resolve().parent.parent.parent.parent)
+                if root_dir not in sys.path:
+                    sys.path.append(root_dir)
+                from stitch import build_reel_from_segments
+                
+                build_reel_from_segments(final_segs, clips_dir, reel_path)
+                
+                if reel_path.exists():
+                    logging.info("  📤 [Pipeline] Uploading final video to MinIO...")
+                    object_key = f"projects/{project_id}/jobs/{job_id}/final_video.mp4"
+                    with open(reel_path, "rb") as video_file:
+                        storage_service.upload_file_obj(video_file, object_key, content_type="video/mp4")
+                    logging.info(f"  ✅ [Pipeline] Final video uploaded to MinIO: {object_key}")
+                else:
+                    raise FileNotFoundError("Final video file was not created by stitcher.")
+                
                 update_progress(100, JobStatus.COMPLETED)
                 
             except Exception as e:

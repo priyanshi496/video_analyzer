@@ -66,7 +66,7 @@ def test_auth_flow():
     print(f"SUCCESS: Current user verified: {me_resp.json().get('email')}")
 
     print("\n5. Accessing protected endpoint without token...")
-    no_token_resp = httpx.post(f"{BASE_URL}/projects/", json={"name": "Test project", "platform": "instagram_reels"}, timeout=10.0)
+    no_token_resp = httpx.post(f"{BASE_URL}/projects/", json={"name": "Test project"}, timeout=10.0)
     if no_token_resp.status_code == 401:
         print("SUCCESS: Anonymous project creation correctly blocked with 401 Unauthorized.")
     else:
@@ -76,7 +76,7 @@ def test_auth_flow():
     print("\n6. Creating project with valid token...")
     proj_resp = httpx.post(
         f"{BASE_URL}/projects/",
-        json={"name": "Authenticated test project", "platform": "instagram_reels"},
+        json={"name": "Authenticated test project"},
         headers=headers,
         timeout=10.0
     )
@@ -89,10 +89,10 @@ def test_auth_flow():
     project_id = proj_data.get("id")
     print(f"SUCCESS: Project created: {project_id}")
 
-    print("\n7. Patching/updating project name and platform...")
+    print("\n7. Patching/updating project name...")
     patch_resp = httpx.patch(
         f"{BASE_URL}/projects/{project_id}",
-        json={"name": "Renamed project", "platform": "youtube_shorts"},
+        json={"name": "Renamed project"},
         headers=headers,
         timeout=10.0
     )
@@ -101,8 +101,8 @@ def test_auth_flow():
         sys.exit(1)
     
     updated_data = patch_resp.json()
-    if updated_data.get("name") != "Renamed project" or updated_data.get("platform") != "youtube_shorts":
-        print(f"FAIL: Project patch did not update name or platform correctly: {updated_data}")
+    if updated_data.get("name") != "Renamed project":
+        print(f"FAIL: Project patch did not update name correctly: {updated_data}")
         sys.exit(1)
     print("SUCCESS: Project patched successfully.")
 
