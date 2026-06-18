@@ -275,7 +275,7 @@ Rules:
 - time_of_day: infer from lighting, sky color, shadows, and artificial light presence. dawn = soft pink/purple sky. morning = bright soft light, long shadows. afternoon = harsh overhead light. golden_hour = warm orange light, low sun. dusk = sky transitioning dark. night = dark sky, artificial lights dominant. If indoors with no sky visible, infer from light color temperature (warm tungsten = likely night, cool daylight = likely day).
 - scene_category: Classify the dominant content of the clip. Options: scenery, people, action, food, vehicle, mixed.
 - primary_subjects: List of 1-3 most visually prominent subjects (people by role/appearance like 'woman in yellow dress', objects, landmarks, landmarks like 'temple dome'). Be specific, not generic.
-- Prefer 1–3 strong segments. Max 5. Stay within {duration}s.
+- Prefer 1–3 strong segments. Max 5. Stay within {duration}s. Ensure the key narrative arc is represented: if the video has a clear celebratory, interactive, or conclusive payoff moment at the end, you MUST include a segment for it.
 - YOU MUST include "best_segments" in the JSON output.
 - CRITICAL: You MUST use real timestamps from the frames and real 1-10 scores instead of placeholder types.
 - camera_rotation: Always set this to 0 (do not attempt to auto-rotate).
@@ -370,7 +370,7 @@ def build_story_order_prompt(segments: list, all_results: list, directives: str 
             "seg": seg,
             "dur": dur,
             "clip_type": clip_type,
-            "reason": seg.get("reason", "")[:140],
+            "reason": (seg.get("reason") or "")[:140],
             "similar_to": [],
         })
 
@@ -413,7 +413,7 @@ Role: {seg.get("narrative_role", "unknown")}
 Mood: {seg.get("overall_mood", "")}
 Reason: {entry['reason']}{similar_note}
 Source: {Path(seg.get("video_path", "unknown")).stem}
-Editor Read: {seg.get("editor_reasoning", "")[:220] or "N/A"}
+Editor Read: {(seg.get("editor_reasoning") or "")[:220] or "N/A"}
 """.strip()
         )
 

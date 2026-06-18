@@ -105,7 +105,7 @@ def _post_with_retry(payload: dict, headers: dict, timeout: int, label: str = ""
         payload_copy["chat_template_kwargs"] = {"enable_thinking": True}
         payload_copy["reasoning_budget"] = 128
         payload_copy["temperature"] = 0.0
-        payload_copy["max_tokens"] = min(payload_copy.get("max_tokens", 2048), 2048)
+        payload_copy["max_tokens"] = min(payload_copy.get("max_tokens", 4096), 4096)
 
     if model_name.startswith("nvidia/") and not model_name.endswith(":free") and settings.NVIDIA_API_KEY and not NVIDIA_UNHEALTHY:
         url = "https://integrate.api.nvidia.com/v1/chat/completions"
@@ -283,7 +283,7 @@ def call_openrouter_multiimage(
             "model":       model_name,
             "messages":    [{"role": "user", "content": content}],
             "temperature": 0,
-            "max_tokens":  1500,
+            "max_tokens":  4096,
         }
         result, err = _post_with_retry(payload, headers, timeout=120, label=model_name)
         if result is not None:
