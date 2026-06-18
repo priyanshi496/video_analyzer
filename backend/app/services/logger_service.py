@@ -10,10 +10,11 @@ from app.services.storage_service import storage_service
 
 _run_id: Optional[str] = None
 
-def init_run_log_dir(job_id: str) -> str:
+def init_run_log_dir(project_id: str, job_id: str) -> str:
     global _run_id
-    _run_id = job_id
-    logging.info(f"  [logger_service] Logging LLM calls to MinIO under logs/llm/{_run_id}/")
+    _run_id = f"{project_id}/{job_id}"
+    Path(f"logs/{_run_id}").mkdir(parents=True, exist_ok=True)
+    logging.info(f"  [logger_service] Logging LLM calls locally under logs/{_run_id}/")
     return _run_id
 
 def _get_run_id() -> str:
@@ -37,7 +38,7 @@ def log_llm_call(
     run_id = _get_run_id()
     safe_label = label.replace("/", "_").replace(" ", "_")[:80]
     filename = f"{safe_label}_attempt{attempt}.md"
-    object_key = f"logs/llm/{run_id}/{filename}"
+    object_key = f"logs/{run_id}/{filename}"
 
     input_tokens = _estimate_tokens(prompt)
     output_tokens = _estimate_tokens(raw_response or "")
@@ -104,8 +105,11 @@ def log_llm_call(
     # Wrap in markdown code block for clean preview
     md_content = f"```text\n{text_content}\n```"
     
-    # Upload to MinIO
-    storage_service.upload_log_text(md_content, object_key)
+    # Save locally
+    log_file_path = Path(object_key)
+    log_file_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_file_path, "w", encoding="utf-8") as f:
+        f.write(md_content)
 
     status = "✓" if parsed else "✗"
     logging.info(
@@ -149,7 +153,7 @@ def write_run_summary(
     total_duration_sec: float,
 ) -> str:
     run_id = _get_run_id()
-    object_key = f"logs/llm/{run_id}/SUMMARY.md"
+    object_key = f"logs/{run_id}/SUMMARY.md"
 
     divider = "═" * 80
     lines = [
@@ -243,6 +247,11 @@ def write_run_summary(
     text_content = "\n".join(lines)
     
     md_content = f"```text\n{text_content}\n```"
-    storage_service.upload_log_text(md_content, object_key)
+    
+    log_file_path = Path(object_key)
+    log_file_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_file_path, "w", encoding="utf-8") as f:
+        f.write(md_content)
+        
     logging.info(f"  [logger_service] Run summary → {object_key}")
     return object_key

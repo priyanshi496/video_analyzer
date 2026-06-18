@@ -1380,7 +1380,7 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
     try:
         update_progress(5, JobStatus.RUNNING)
         from app.services.logger_service import init_run_log_dir
-        init_run_log_dir(job_id)
+        init_run_log_dir(project_id, job_id)
         logging.info(f"  🎬 [Pipeline] Starting analysis | vibe={vibe!r} | directives={directives!r}")
 
         with tempfile.TemporaryDirectory() as tmpdir:

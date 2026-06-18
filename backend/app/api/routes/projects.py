@@ -32,7 +32,6 @@ async def create_project(
 
     new_project = Project(
         name=name,
-        platform=project_in.platform,
         user_id=current_user.id
     )
     db.add(new_project)
@@ -60,8 +59,6 @@ async def update_project(
 
     if project_in.name is not None:
         project.name = project_in.name
-    if project_in.platform is not None:
-        project.platform = project_in.platform
 
     await db.commit()
     await db.refresh(project)
