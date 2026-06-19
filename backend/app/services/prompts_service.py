@@ -269,12 +269,15 @@ Clip types — pick ONE:
 Rules:
 - Prefer SETTLED/LINEAR_FORWARD frames. Avoid CHAOTIC/WHIP_PAN frames.
 - Reject: blurry-throughout, floor-only, empty walking-only shots.
-- Each segment: 1.0–4.0s. Approach/driving clips: max 3.0s.
-- location_tag: snake_case label for the physical spot/subject (e.g. plane_interior, airport, car_interior, parking_lot, temple_entrance, temple_altar). Use the same tag for clips showing the same location/setting.
+- Clip Durations (CRITICAL PACING):
+  - High-energy/active footage (e.g. pool action, table tennis/ping pong, sports, rapid movement): MUST be fast and dynamic, exactly 1.5–2.0 seconds (e.g. start=10.0, end=11.5 or 12.0).
+  - Slower atmospheric/cinematic beauty shots (e.g. temples, candles, sunset, reflection): Let them linger, exactly 3.0–4.0 seconds (e.g. start=0.0, end=3.5).
+  - All other clips (B-roll, scenery, setup, transition walking): MUST be 2.0–3.0 seconds. NEVER exceed 3.0 seconds.
+- location_tag: snake_case label for the physical spot/subject (e.g. pool, table_tennis, garden, archway, city, temple_candles). Use the same tag for clips showing the same location/setting.
 - journey_phase: approach|arrival|exterior|interior|detail|climax
 - time_of_day: infer from lighting, sky color, shadows, and artificial light presence. dawn = soft pink/purple sky. morning = bright soft light, long shadows. afternoon = harsh overhead light. golden_hour = warm orange light, low sun. dusk = sky transitioning dark. night = dark sky, artificial lights dominant. If indoors with no sky visible, infer from light color temperature (warm tungsten = likely night, cool daylight = likely day).
 - scene_category: Classify the dominant content of the clip. Options: scenery, people, action, food, vehicle, mixed.
-- primary_subjects: List of 1-3 most visually prominent subjects (people by role/appearance like 'woman in yellow dress', objects, landmarks, landmarks like 'temple dome'). Be specific, not generic.
+- primary_subjects: List of 1-3 most visually prominent subjects (people by role/appearance like 'woman in yellow dress', objects, landmarks like 'temple dome'). Be specific, not generic.
 - Prefer 1–3 strong segments. Max 5. Stay within {duration}s. Ensure the key narrative arc is represented: if the video has a clear celebratory, interactive, or conclusive payoff moment at the end, you MUST include a segment for it.
 - YOU MUST include "best_segments" in the JSON output.
 - CRITICAL: You MUST use real timestamps from the frames and real 1-10 scores instead of placeholder types.
@@ -473,7 +476,8 @@ AVAILABLE CLIPS
 STEP 1 — REMOVE WEAK / REPETITIVE CLIPS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Default action: KEEP the clip and find a good position for it. DO NOT completely exclude any source video unless instructed by the directives.
+- Duplicate/Repetitive Clips: If you have two clips that show visually similar action or subject (e.g. two pool jumps, two very similar garden views), apply the "Rule of One": select the single best version (clearest, best lighting, best action) and remove the duplicate by placing it in "removed_clips". This prevents the viewer's brain from switching off.
+- Default action: Otherwise, KEEP the clip and find a good position for it. DO NOT completely exclude any source video unless instructed by the directives.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 2 — BUILD THE ORDER BASED ON THE DIRECTIVES
@@ -481,9 +485,23 @@ STEP 2 — BUILD THE ORDER BASED ON THE DIRECTIVES
 
 You have full freedom to reorder the clips to best satisfy the USER EDITING DIRECTIVES above.
 Prioritize the chronological flow, subject focus, or progression requested by the user.
-Ignore default location grouping, temporal flow, or strict hook rules if they contradict the user's explicit request.
 
-- LOCATION GROUPING: Unless the USER EDITING DIRECTIVES explicitly ask to alternate/interleave locations, you MUST group clips from the same physical location/scene together as a contiguous block. Do NOT jump back and forth between completely different locations (e.g. birthday -> trampoline -> birthday) unless the directives explicitly demand that.
+- REORGANIZE THE "ACTS" (Logical Flow): Stop jumping between locations. Group your clips into three natural Acts to build a professional story flow:
+  - Act I: The Arrival (Setting the Scene): Start with the archway/garden (establishing shots), then transition to city/architecture.
+  - Act II: The Experience (High Energy): Transition to boat/water shots, followed by pool action (keep all wet/active/sports footage grouped in this block).
+  - Act III: The Reflection (Slow Down): End with temple/candles (the low light/candles make for a perfect emotional closing).
+- LOCATION GROUPING: Within each Act, you MUST group clips from the same physical location/scene together as a contiguous block. Do NOT jump back and forth between locations (e.g., pool -> city -> pool).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3 — CHOOSE FLUID AND EMOTIONAL TRANSITIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+For the transitions between consecutive clips, apply specific editing logic:
+- The Cross-Dissolve ("dissolve"): Use this ONLY as a bridge when transitioning from one "Act" to the next (e.g., from city architecture into the boat ride).
+- The Zoom-In ("zoom_in" or "zoom_dissolve"): Use this INSIDE the Acts to emphasize exciting action (e.g., as someone hits the water/pool, or hits a table tennis ball).
+- The Cut ("cut"): Use this as the default for cuts within the same location/scene to keep the pacing dynamic.
+- The Fade ("fade"): Use this at the very start/end of the video. Do not use intermediate fades elsewhere.
+- Set transition durations appropriately (e.g. 0.2s - 0.3s for fast action, 0.4s - 0.5s for slower dissolves/fades).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT
@@ -500,11 +518,15 @@ No code fences.
   "order": [4, 1, 0, 6, 2, 7, 5, 8], // MUST contain ALL survived clip indices.
   "roles": ["hook", "build", "build", "build", "build", "build", "build", "payoff"],
   "energy_flow": ["dramatic", "movement", "calm", "atmospheric", "steady", "curious", "intense", "epic"],
+  "transitions": ["fade", "zoom_dissolve", "dissolve", "cut", "zoom_in", "fade", "circle_crop"], // Transition name between consecutive clips in order. Length MUST be exactly len(order) - 1. Choose mostly FLUID transitions: fade, dissolve, zoom_dissolve, zoom_in, zoom_out, circle_crop, cut (50ms micro-fade). Avoid wipes/slides unless high-action.
+  "transition_durations": [0.5, 0.4, 0.5, 0.05, 0.5, 0.5, 0.5], // Duration of each transition in seconds. Length MUST be exactly len(order) - 1.
   "reasoning": "Explain how the sequence satisfies the USER EDITING DIRECTIVES."
 }}
 
 CRITICAL RULES:
 - order and roles MUST be same length
+- transitions and transition_durations MUST be of length (len(order) - 1)
+- Choose mostly FLUID, organic transitions (fade, dissolve, zoom_dissolve, zoom_in, cut). Avoid wipes and slides unless representing continuous high-action sports footage (like pool action or ping pong play).
 - no duplicate clips in order
 - removed_clips MUST NOT appear in order
 - You MUST include ALL clips in 'order' that you did not explicitly remove in 'removed_clips'. Do NOT drop clips silently.
@@ -570,23 +592,9 @@ AVAILABLE CLIPS
 STEP 1 — REMOVE WEAK / REPETITIVE CLIPS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Be VERY conservative about removal. Removing a good clip is worse than keeping one extra clip.
-
-You MUST NOT remove a clip unless BOTH of these are true:
-1. It shows the EXACT SAME framing AND subject as another clip already in the reel
-2. The other version is clearly stronger (better blur/shake scores or more decisive action)
-
-Do NOT remove clips because:
-- they show a similar location (different framing = different clip)
-- they feel "less cinematic" but are visually fine
-- you are trying to keep the reel short
-- they show the same person in a different moment or expression
-
-DO NOT completely exclude any source video from the final reel. Every source video must contribute at least one clip.
-
-Only remove if you cannot use the clip without making the sequence feel repetitive (e.g. two shots of identical framing of the same subject with the same expression).
-
-Default action: KEEP the clip and find a good position for it.
+- Duplicate/Repetitive Clips: If you have two clips that show visually similar action or subject (e.g. two pool jumps, two very similar garden views), apply the "Rule of One": select the single best version (clearest, best lighting, best action) and remove the duplicate by placing it in "removed_clips". This prevents the viewer's brain from switching off.
+- Otherwise, be conservative about removal. Do NOT remove clips just because they feel "less cinematic" or to keep the reel short. Every source video must contribute at least one clip if possible.
+- Default action: KEEP the clip and find a good position for it.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 2 — BUILD THE EMOTIONAL ARC
@@ -595,10 +603,14 @@ STEP 2 — BUILD THE EMOTIONAL ARC
 {temporal_note}
 
 Your job is ONLY to:
-1. Decide the best HOOK (first clip) within the first time block.
-2. Ensure no consecutive same-type clips (swap adjacent clips if needed).
-3. Choose the best PAYOFF (final clip).
-4. LOCATION GROUPING: Clips from the same physical location MUST be strictly grouped together as a contiguous block. Do NOT interleave clips from different locations. Note that different clips might have slightly different location names from individual analysis; you must group similar tags (or tags representing the same physical venue/activity) as the same location. {loc_grouping_note}
+1. REORGANIZE THE "ACTS" (Logical Flow): Stop jumping between locations. Group your clips into three natural Acts to build a professional story flow:
+   - Act I: The Arrival (Setting the Scene): Start with the archway/garden (establishing shots), then transition to city/architecture.
+   - Act II: The Experience (High Energy): Transition to boat/water shots, followed by pool action (keep all wet/active/sports footage grouped in this block).
+   - Act III: The Reflection (Slow Down): End with temple/candles (the low light/candles make for a perfect emotional closing).
+2. Decide the best HOOK (first clip) within Act I.
+3. Ensure no consecutive same-type clips (swap adjacent clips if needed).
+4. Choose the best PAYOFF (final clip) within Act III.
+5. LOCATION GROUPING: Within each Act, you MUST group clips from the same physical location/scene together as a contiguous block. Do NOT jump back and forth between locations (e.g. pool -> city -> pool).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 HOOK RULES
@@ -674,6 +686,17 @@ The strongest visual MAY appear:
 Choose what creates the BEST overall reel.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TRANSITION RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+For the transitions between consecutive clips, apply specific editing logic:
+- The Cross-Dissolve ("dissolve"): Use this ONLY as a bridge when transitioning from one "Act" to the next (e.g., from city architecture into the boat ride).
+- The Zoom-In ("zoom_in" or "zoom_dissolve"): Use this INSIDE the Acts to emphasize exciting action (e.g., as someone hits the water/pool, or hits a table tennis ball).
+- The Cut ("cut"): Use this as the default for cuts within the same location/scene to keep the pacing dynamic.
+- The Fade ("fade"): Use this at the very start/end of the video. Do not use intermediate fades elsewhere.
+- Set transition durations appropriately (e.g. 0.2s - 0.3s for fast action, 0.4s - 0.5s for slower dissolves/fades).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EDITORIAL THINKING
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -731,11 +754,33 @@ No code fences.
     "epic"
   ],
 
+  "transitions": [
+    "fade",
+    "zoom_dissolve",
+    "dissolve",
+    "cut",
+    "zoom_in",
+    "fade",
+    "circle_crop"
+  ], // Transition name between consecutive clips in order. Length MUST be exactly len(order) - 1. Choose mostly FLUID transitions: fade, dissolve, zoom_dissolve, zoom_in, zoom_out, circle_crop, cut. Avoid wipes/slides unless high-action.
+
+  "transition_durations": [
+    0.5,
+    0.4,
+    0.5,
+    0.05,
+    0.5,
+    0.5,
+    0.5
+  ], // Duration of each transition in seconds. Length MUST be exactly len(order) - 1.
+
   "reasoning": "Explain why the hook works, why transitions feel emotionally effective, how contrast was used, why clips were removed, and why the ending feels satisfying."
 }}
 
 CRITICAL RULES:
 - order and roles MUST be same length
+- transitions and transition_durations MUST be of length (len(order) - 1)
+- Choose mostly FLUID, organic transitions (fade, dissolve, zoom_dissolve, zoom_in, cut). Avoid wipes and slides unless representing continuous high-action sports footage (like pool action or ping pong play).
 - no duplicate clips in order
 - removed_clips MUST NOT appear in order
 - You MUST include ALL clips in 'order' that you did not explicitly remove in 'removed_clips'. Do NOT drop clips silently.
