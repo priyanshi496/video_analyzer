@@ -49,6 +49,36 @@ def has_audio_stream(video_path: str) -> bool:
         return False
 
 
+def get_video_dimensions(video_path: str) -> tuple[int, int]:
+    """Uses ffprobe to extract video width and height, with cv2 fallback."""
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=s=x:p=0",
+        str(video_path)
+    ]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout.strip():
+            w, h = map(int, res.stdout.strip().split('x'))
+            return w, h
+    except Exception:
+        pass
+    # Fallback to OpenCV
+    try:
+        import cv2
+        cap = cv2.VideoCapture(str(video_path))
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+        if w > 0 and h > 0:
+            return w, h
+    except Exception:
+        pass
+    return 1080, 1920
+
+
 def trim_and_normalize_clip(
     video_path: str,
     start_sec: float,
@@ -93,6 +123,37 @@ def trim_and_normalize_clip(
     elif rotation == 270:
         transpose_filter = "transpose=2,"
 
+    # Determine dimensions and check if aspect ratio is landscape (needs blurred padding)
+    try:
+        w, h = get_video_dimensions(str(path_obj))
+        if rotation in (90, 270):
+            w, h = h, w
+        input_aspect = w / h
+        target_aspect = width / height
+        # If the input aspect ratio deviates from the target (portrait 9:16) by more than 5%, we consider it landscape/different
+        is_landscape = abs(input_aspect - target_aspect) >= 0.05
+    except Exception as e:
+        logger.warning(f"Failed to probe aspect ratio for {video_path}: {e}")
+        is_landscape = False
+
+    if is_landscape:
+        # Scale background to cover + gblur, overlay scaled original on top
+        vf_filter = (
+            f"{transpose_filter}split=2[bg][fg];"
+            f"[bg]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},"
+            f"gblur=sigma=20[bg_blurred];"
+            f"[fg]scale={width}:{height}:force_original_aspect_ratio=decrease[fg_scaled];"
+            f"[bg_blurred][fg_scaled]overlay=(W-w)/2:(H-h)/2,fps={fps}"
+        )
+    else:
+        # Direct vertical aspect ratio (9:16) -> scale and pad normally
+        vf_filter = (
+            f"{transpose_filter}"
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
+            f"fps={fps}"
+        )
+
     if is_image:
         cmd = [
             "ffmpeg", "-y",
@@ -101,12 +162,7 @@ def trim_and_normalize_clip(
             "-f", "lavfi",
             "-i", "anullsrc=r=44100:cl=stereo",
             "-t", f"{dur:.3f}",
-            "-vf", (
-                f"{transpose_filter}"
-                f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
-                f"fps={fps}"
-            ),
+            "-vf", vf_filter,
             "-pix_fmt", "yuv420p",
             "-c:v", "libx264",
             "-preset", "fast",
@@ -131,14 +187,8 @@ def trim_and_normalize_clip(
                 "-i", str(video_path),
                 "-f", "lavfi",
                 "-i", "anullsrc=r=44100:cl=stereo",
-                # -t placed here as an OUTPUT option, correctly limiting encoded duration
                 "-t", f"{dur:.3f}",
-                "-vf", (
-                    f"{transpose_filter}"
-                    f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                    f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
-                    f"fps={fps}"
-                ),
+                "-vf", vf_filter,
                 "-pix_fmt", "yuv420p",
                 "-map", "0:v:0",
                 "-map", "1:a:0",
@@ -158,12 +208,7 @@ def trim_and_normalize_clip(
                 "-ss", f"{start_sec:.3f}",
                 "-i", str(video_path),
                 "-t", f"{dur:.3f}",
-                "-vf", (
-                    f"{transpose_filter}"
-                    f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                    f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
-                    f"fps={fps}"
-                ),
+                "-vf", vf_filter,
                 "-pix_fmt", "yuv420p",
                 "-c:v", "libx264",
                 "-preset", "fast",
@@ -226,147 +271,21 @@ def stitch_clips(
     transition_durations: list = None,
 ) -> str:
     """
-    Concatenate pre-normalized clips into one final reel.
-    If transitions are provided, uses xfade/acrossfade complex filter graph.
-    Falls back to safe concat demuxer on error or if no transitions are requested.
+    Concatenate pre-normalized clips into one final reel using the safe concat demuxer.
+
+    The xfade/acrossfade filter_complex approach was removed because acrossfade is a
+    sequential blocking filter that reads ALL of stream-1 to EOF before outputting past
+    the crossfade point. When multiple clips are chained this causes hard freezes at
+    every clip boundary (visible as a frozen frame at ~6s, ~11s, etc.).
+
+    The original stitch.py used the simple concat demuxer with +genpts / aresample=async=1
+    which is reliable and freeze-free. We match that approach here.
     """
     if not clip_paths:
         raise RuntimeError("No clips available to stitch.")
 
-    # 1. Determine if we should use transitions
-    use_transitions = False
-    if transitions:
-        for t in transitions:
-            if t and t != "cut":
-                use_transitions = True
-                break
-
-    if not use_transitions:
-        return _stitch_concat_demuxer(clip_paths, output_path)
-
-    # 2. Render with transitions
-    try:
-        logger.info(f"Rendering {len(clip_paths)} clips with xfade transitions...")
-        durations = []
-        for p in clip_paths:
-            durations.append(get_video_duration(p))
-
-        n = len(clip_paths)
-        t_types = []
-        t_durs = []
-        
-        # Map narrative rules/UI tags to actual FFmpeg xfade transition filters
-        TRANSITION_MAP = {
-            "fade": "fade",
-            "dissolve": "dissolve",
-            "zoom_in": "zoomin",
-            "zoom_out": "fade",
-            "zoom_dissolve": "zoomin",
-            "wipe_left": "wipeleft",
-            "wipe_right": "wiperight",
-            "slide_left": "slideleft",
-            "slide_right": "slideright",
-            "circle_crop": "circlecrop",
-            "circleopen": "circleopen",
-            "circleclose": "circleclose",
-            "cut": "fade",
-        }
-
-        for i in range(n - 1):
-            t_type = transitions[i] if i < len(transitions) else "cut"
-            t_dur = transition_durations[i] if (transition_durations and i < len(transition_durations)) else 0.5
-            
-            if t_type == "cut":
-                mapped_type = "fade"
-                mapped_dur = 0.05  # 50ms micro-fade to act as pop-free cut
-            elif t_type == "fade":
-                # Only use a real fade (dip to black) if it's the transition to the final shot (last transition)
-                if i == n - 2:
-                    mapped_type = "fade"
-                else:
-                    mapped_type = "dissolve"
-                mapped_dur = t_dur
-            else:
-                mapped_type = TRANSITION_MAP.get(t_type, "dissolve")
-                mapped_dur = t_dur
-                
-            # Clamp duration to half the length of the shorter clip
-            max_dur = min(durations[i], durations[i+1]) / 2.0
-            if mapped_dur > max_dur:
-                mapped_dur = max_dur
-                
-            t_types.append(mapped_type)
-            t_durs.append(mapped_dur)
-
-        # Build filter complex
-        video_filters = []
-        audio_filters = []
-        
-        # Bookend: Fade-in from black at start of first clip (video/audio)
-        video_filters.append("[0:v]fade=t=in:st=0:d=1.0[v_in_faded]")
-        audio_filters.append("[0:a]afade=t=in:st=0:d=1.0[a_in_faded]")
-        
-        cumulative_offset = 0.0
-
-        for i in range(n - 1):
-            # Offset formula: O_0 = L_0 - D_0, O_i = O_{i-1} + L_i - D_i
-            offset = round(cumulative_offset + durations[i] - t_durs[i], 3)
-            offset = max(0.0, offset)
-
-            v_in1 = "[v_in_faded]" if i == 0 else f"[vfade{i-1}]"
-            a_in1 = "[a_in_faded]" if i == 0 else f"[afade{i-1}]"
-
-            v_in2 = f"[{i+1}:v]"
-            a_in2 = f"[{i+1}:a]"
-
-            v_out = "[vout_temp]" if i == n - 2 else f"[vfade{i}]"
-            a_out = "[aout_temp]" if i == n - 2 else f"[afade{i}]"
-
-            video_filters.append(
-                f"{v_in1}{v_in2}xfade=transition={t_types[i]}:duration={t_durs[i]}:offset={offset}{v_out}"
-            )
-            audio_filters.append(
-                f"{a_in1}{a_in2}acrossfade=d={t_durs[i]}{a_out}"
-            )
-
-            # Keep track of the timeline position of the next clip in the output
-            cumulative_offset = offset
-
-        # Bookend: Fade-out to black at end of last clip (video/audio)
-        total_duration = round(cumulative_offset + durations[-1], 3)
-        fade_out_start = max(0.0, round(total_duration - 1.0, 3))
-        
-        video_filters.append(f"[vout_temp]fade=t=out:st={fade_out_start}:d=1.0[vout]")
-        audio_filters.append(f"[aout_temp]afade=t=out:st={fade_out_start}:d=1.0[aout]")
-
-        filter_complex = ";".join(video_filters + audio_filters)
-
-        cmd = ["ffmpeg", "-y"]
-        for p in clip_paths:
-            cmd.extend(["-i", p])
-        cmd.extend(["-filter_complex", filter_complex])
-        cmd.extend(["-map", "[vout]", "-map", "[aout]"])
-        cmd.extend([
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "23",
-            "-pix_fmt", "yuv420p",
-            "-c:a", "aac",
-            "-ar", "44100",
-            "-ac", "2",
-            str(output_path)
-        ])
-
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"FFmpeg xfade failed:\n{result.stderr}")
-            
-        logger.info("Successfully stitched clips with xfade transitions.")
-        return str(output_path)
-
-    except Exception as e:
-        logger.error(f"Xfade transition stitching failed: {e}. Falling back to plain concat...")
-        return _stitch_concat_demuxer(clip_paths, output_path)
+    logger.info(f"Stitching {len(clip_paths)} clips with safe concat demuxer (no transitions)...")
+    return _stitch_concat_demuxer(clip_paths, output_path)
 
 
 def build_reel_from_segments(

@@ -1440,7 +1440,7 @@ from app.models.domain import AnalysisJob, AnalyzedClip, JobStatus
 from app.services.storage_service import storage_service
 
 @celery_app.task(bind=True)
-def analyze_video_project(self, project_id: str, job_id: str, media_assets: list, directives: str = "", vibe: str = "cinematic"):
+def analyze_video_project(self, project_id: str, job_id: str, media_assets: list, directives: str = "", vibe: str = "cinematic", music_config: dict = None):
     import uuid
     import asyncio
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
@@ -1571,6 +1571,33 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                 from app.services.stitch_service import build_reel_from_segments
                 
                 build_reel_from_segments(final_segs, clips_dir, reel_path)
+                
+                # Check for music integration
+                if music_config and music_config.get("mode") != "none":
+                    logging.info(f"  🎵 [Pipeline] Running music selection flow. Mode: {music_config.get('mode')}")
+                    from app.services.music_service import resolve_custom_music, pick_ai_music, mix_music_into_video
+                    import os
+                    
+                    music_path = None
+                    if music_config.get("mode") == "custom" and music_config.get("custom_query"):
+                        music_path = resolve_custom_music(music_config["custom_query"], tmpdir)
+                    elif music_config.get("mode") == "ai":
+                        music_path = pick_ai_music(vibe, final_segs, tmpdir)
+                        
+                    if music_path and os.path.exists(music_path):
+                        logging.info(f"  🎵 [Pipeline] Music resolved to local path: {music_path}. Mixing...")
+                        mixed_reel_path = Path(tmpdir) / "final_video_mixed.mp4"
+                        try:
+                            mix_music_into_video(str(reel_path), music_path, str(mixed_reel_path))
+                            if mixed_reel_path.exists():
+                                reel_path = mixed_reel_path
+                                logging.info("  🎵 [Pipeline] Music successfully mixed into reel video.")
+                            else:
+                                logging.warning("  ⚠️ [Pipeline] Mixed video was not created, falling back to silent video.")
+                        except Exception as mix_err:
+                            logging.error(f"  ❌ [Pipeline] Failed to mix music into video: {mix_err}. Falling back to silent video.")
+                    else:
+                        logging.warning("  ⚠️ [Pipeline] Music path could not be resolved. Falling back to silent video.")
                 
                 if reel_path.exists():
                     logging.info("  📤 [Pipeline] Uploading final video to MinIO...")

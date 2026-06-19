@@ -140,8 +140,28 @@ def clamp_segments(segments: list, duration: float) -> list:
     """Validate and clamp segment time boundaries to [0, duration]."""
     valid = []
     for seg in segments:
-        start = max(0.0, float(seg.get("start_sec", 0)))
-        end   = min(float(duration), float(seg.get("end_sec", duration)))
+        if not isinstance(seg, dict):
+            continue
+        try:
+            start_val = seg.get("start_sec", 0.0)
+            if isinstance(start_val, str):
+                start_val = start_val.strip()
+                if start_val.lower() in ("float", "double", "int", ""):
+                    start_val = 0.0
+            start = max(0.0, float(start_val))
+        except (ValueError, TypeError):
+            start = 0.0
+
+        try:
+            end_val = seg.get("end_sec", duration)
+            if isinstance(end_val, str):
+                end_val = end_val.strip()
+                if end_val.lower() in ("float", "double", "int", ""):
+                    end_val = duration
+            end = min(float(duration), float(end_val))
+        except (ValueError, TypeError):
+            end = duration
+
         if end > start:
             seg["start_sec"] = round(start, 2)
             seg["end_sec"]   = round(end,   2)
