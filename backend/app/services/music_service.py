@@ -181,7 +181,8 @@ def pick_ai_music(vibe: str, final_segs: list, tmpdir: str) -> str:
         "spiritual": 4,
         "cinematic": 7,
         "nostalgic": 5,
-        "adventurous": 8
+        "adventurous": 8,
+        "garba": 9
     }.get(vibe.lower(), 6)
     
     # 2. Collect mood/vibe descriptions from the segments to compute adjustment
