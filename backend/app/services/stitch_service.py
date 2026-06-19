@@ -235,8 +235,7 @@ def trim_and_normalize_clip(
     return str(out_path)
 
 
-def _stitch_concat_demuxer(clip_paths: list, output_path) -> str:
-    """Helper to perform fast concat demuxer stitch (hard cuts only)."""
+def _stitch_concat_demuxer(clip_paths: list, output_path, bgm_path: str = None, bgm_start_sec: float = 0.0) -> str:
     import uuid
     concat_list = Path(output_path).parent / f"concat_list_{uuid.uuid4().hex}.txt"
     with open(concat_list, "w") as f:
@@ -248,12 +247,27 @@ def _stitch_concat_demuxer(clip_paths: list, output_path) -> str:
         "-f",      "concat",
         "-safe",   "0",
         "-i",      str(concat_list),
-        "-fflags", "+genpts",
-        "-af",     "aresample=async=1",
-        "-c:v",    "copy",
-        "-c:a",    "aac",
-        str(output_path),
+        "-fflags", "+genpts"
     ]
+    
+    if bgm_path:
+        cmd.extend([
+            "-ss", str(bgm_start_sec),
+            "-i", str(bgm_path),
+            "-filter_complex", "[0:a]aresample=async=1[a1];[1:a]volume=0.8[a2];[a1][a2]amix=inputs=2:duration=first:dropout_transition=3[aout]",
+            "-map", "0:v",
+            "-map", "[aout]",
+            "-c:v", "copy",
+            "-c:a", "aac"
+        ])
+    else:
+        cmd.extend([
+            "-af", "aresample=async=1",
+            "-c:v", "copy",
+            "-c:a", "aac"
+        ])
+
+    cmd.append(str(output_path))
     result = subprocess.run(cmd, capture_output=True, text=True)
     concat_list.unlink(missing_ok=True)
 
@@ -275,6 +289,8 @@ def stitch_clips(
     output_path,
     transitions: list = None,
     transition_durations: list = None,
+    bgm_path: str = None,
+    bgm_start_sec: float = 0.0,
 ) -> str:
     """
     Concatenate pre-normalized clips into one final reel using the safe concat demuxer.
@@ -394,13 +410,22 @@ def stitch_clips(
         fade_out_start = max(0.0, round(total_duration - 1.0, 3))
         
         video_filters.append(f"[vout_temp]fade=t=out:st={fade_out_start}:d=1.0[vout]")
-        audio_filters.append(f"[aout_temp]afade=t=out:st={fade_out_start}:d=1.0[aout]")
+        if bgm_path:
+            audio_filters.append(f"[aout_temp]afade=t=out:st={fade_out_start}:d=1.0[aout_pre]")
+            bgm_idx = len(clip_paths)
+            audio_filters.append(f"[{bgm_idx}:a]volume=0.8[bgm_v];[aout_pre][bgm_v]amix=inputs=2:duration=first:dropout_transition=3[aout]")
+        else:
+            audio_filters.append(f"[aout_temp]afade=t=out:st={fade_out_start}:d=1.0[aout]")
 
         filter_complex = ";".join(video_filters + audio_filters)
 
         cmd = ["ffmpeg", "-y"]
         for p in clip_paths:
             cmd.extend(["-i", p])
+            
+        if bgm_path:
+            cmd.extend(["-ss", str(bgm_start_sec), "-i", str(bgm_path)])
+            
         cmd.extend(["-filter_complex", filter_complex])
         cmd.extend(["-map", "[vout]", "-map", "[aout]"])
         cmd.extend([
@@ -424,7 +449,7 @@ def stitch_clips(
 
     except Exception as e:
         logger.error(f"Xfade transition stitching failed: {e}. Falling back to plain concat...")
-        return _stitch_concat_demuxer(clip_paths, output_path)
+        return _stitch_concat_demuxer(clip_paths, output_path, bgm_path=bgm_path, bgm_start_sec=bgm_start_sec)
 
 
 def build_reel_from_segments(
@@ -436,6 +461,8 @@ def build_reel_from_segments(
     fps: int = 30,
     transitions: list = None,
     transition_durations: list = None,
+    bgm_path: str = None,
+    bgm_start_sec: float = 0.0,
 ) -> str:
     """
     High-level helper: trim all segments → re-encode → stitch → return reel path.
@@ -606,7 +633,14 @@ def build_reel_from_segments(
                 logger.info(f"Computed dynamic footage transitions: {transitions} with durations {transition_durations}")
 
         logger.info(f"\nStitching {len(ordered_clip_paths)} clips → {reel_path} ({width}×{height} @ {fps}fps)...")
-        stitch_clips(ordered_clip_paths, reel_path, transitions, transition_durations)
+        stitch_clips(
+            clip_paths=ordered_clip_paths, 
+            output_path=reel_path, 
+            transitions=transitions, 
+            transition_durations=transition_durations,
+            bgm_path=bgm_path,
+            bgm_start_sec=bgm_start_sec
+        )
 
     size_mb = reel_path.stat().st_size / 1_000_000
     logger.info(f"✓ Reel saved: {reel_path}  ({size_mb:.1f} MB)")

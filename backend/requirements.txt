@@ -23,3 +23,6 @@ email-validator>=2.0.0
 
 
 bcrypt
+librosa>=0.10.1
+soundfile>=0.12.1
+openai-whisper

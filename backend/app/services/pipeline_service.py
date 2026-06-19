@@ -927,7 +927,7 @@ def run_full_analysis(
     max_workers = min(len(video_infos) or 1, CONFIG.get("max_parallel_vision_calls", 3))
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures = [
-            ex.submit(process_single_video, info, api_key, video_quality_map, reference_paths, audio_analysis,directives)
+            ex.submit(process_single_video, info, api_key, video_quality_map, reference_paths, directives=directives, audio_analysis=audio_analysis)
             for info in video_infos
         ]
         import concurrent.futures
@@ -1107,6 +1107,107 @@ def run_full_analysis(
             deduped.append(seg)
     survived = deduped
 
+    # ── Split-Screen Logic for 16:9 Clips ──
+    def group_landscape_clips(segments: list) -> list:
+        import cv2
+        import subprocess
+        import os
+        from pathlib import Path
+
+        new_segments = []
+        landscape_queue = []
+
+        for seg in segments:
+            video_path = seg.get("video_path")
+            if not video_path or not Path(video_path).exists():
+                new_segments.append(seg)
+                continue
+                
+            try:
+                is_image = Path(video_path).suffix.lower() in (".jpg", ".jpeg", ".png", ".heic")
+                if is_image:
+                    img = cv2.imread(video_path)
+                    if img is not None:
+                        h, w = img.shape[:2]
+                        is_landscape = (w >= h * 1.05)
+                    else:
+                        is_landscape = False
+                else:
+                    cap = cv2.VideoCapture(video_path)
+                    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    cap.release()
+                    is_landscape = (w >= h * 1.05) if (h > 0) else False
+            except Exception:
+                is_landscape = False
+
+            if is_landscape:
+                landscape_queue.append(seg)
+                if len(landscape_queue) == 2:
+                    seg1, seg2 = landscape_queue
+                    
+                    out_dir = Path(seg1["video_path"]).parent / "composites"
+                    out_dir.mkdir(exist_ok=True)
+                    out_path = out_dir / f"composite_{len(new_segments)}.mp4"
+                    
+                    dur1 = float(seg1.get("end_sec", 0)) - float(seg1.get("start_sec", 0))
+                    dur2 = float(seg2.get("end_sec", 0)) - float(seg2.get("start_sec", 0))
+                    target_dur = max(dur1, dur2)
+                    if target_dur <= 0.1: target_dur = 3.0
+                    
+                    cmd = ["ffmpeg", "-y"]
+                    
+                    if Path(seg1["video_path"]).suffix.lower() in (".jpg", ".jpeg", ".png", ".heic"):
+                        cmd.extend(["-loop", "1", "-t", str(target_dur), "-i", seg1["video_path"]])
+                    else:
+                        cmd.extend(["-ss", str(seg1.get("start_sec", 0)), "-t", str(target_dur), "-i", seg1["video_path"]])
+
+                    if Path(seg2["video_path"]).suffix.lower() in (".jpg", ".jpeg", ".png", ".heic"):
+                        cmd.extend(["-loop", "1", "-t", str(target_dur), "-i", seg2["video_path"]])
+                    else:
+                        cmd.extend(["-ss", str(seg2.get("start_sec", 0)), "-t", str(target_dur), "-i", seg2["video_path"]])
+                    
+                    cmd.extend([
+                        "-filter_complex",
+                        "[0:v]scale=1080:960:force_original_aspect_ratio=decrease,pad=1080:960:(ow-iw)/2:(oh-ih)/2[top];"
+                        "[1:v]scale=1080:960:force_original_aspect_ratio=decrease,pad=1080:960:(ow-iw)/2:(oh-ih)/2[bottom];"
+                        "[top][bottom]vstack=inputs=2[v]",
+                        "-map", "[v]",
+                        "-c:v", "libx264",
+                        "-preset", "fast",
+                        "-crf", "23",
+                        "-r", "30",
+                        str(out_path)
+                    ])
+                    
+                    logging.info(f"Generating split-screen composite: {out_path}")
+                    try:
+                        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                        
+                        composite_seg = seg1.copy()
+                        composite_seg["video_path"] = str(out_path)
+                        composite_seg["start_sec"] = 0.0
+                        composite_seg["end_sec"] = target_dur
+                        composite_seg["what_happens"] = f"Split screen: Top shows {seg1.get('what_happens', 'something')}. Bottom shows {seg2.get('what_happens', 'something')}."
+                        composite_seg["primary_subjects"] = list(set(seg1.get("primary_subjects", []) + seg2.get("primary_subjects", [])))
+                        composite_seg["scene_category"] = "split_screen_composite"
+                        
+                        new_segments.append(composite_seg)
+                    except Exception as e:
+                        logging.error(f"Failed to create composite: {e}")
+                        new_segments.append(seg1)
+                        new_segments.append(seg2)
+                    
+                    landscape_queue = []
+            else:
+                new_segments.append(seg)
+
+        new_segments.extend(landscape_queue)
+        return new_segments
+
+    # Group landscape clips if portrait output is expected
+    survived = group_landscape_clips(survived)
+
     # ── Focus Filtering & Re-ranking ──
     focus = parse_focus_directive(directives)
     if focus.get("type"):
@@ -1251,7 +1352,11 @@ def run_full_analysis(
                     story_order = clean_order
                     story_roles = clean_roles
                     story_reasoning = parsed_order.get('reasoning', '')
+                    story_transitions = parsed_order.get("transitions", [])
+                    story_transition_durations = parsed_order.get("transition_durations", [])
                     logging.info(f"Beat assignments processed. Resulting order: {story_order}")
+                    if story_transitions:
+                        logging.info(f"LLM Transitions: {story_transitions}")
                 else:
                     logging.info("Beat assignments resulted in no usable clips. Keeping original.")
                     
@@ -1259,8 +1364,8 @@ def run_full_analysis(
                 # ── Handle traditional Order ──
                 order = parsed_order.get("order", [])
                 roles = parsed_order.get("roles", [])
-            llm_transitions = parsed_order.get("transitions", [])
-            llm_durations = parsed_order.get("transition_durations", [])
+                llm_transitions = parsed_order.get("transitions", [])
+                llm_durations = parsed_order.get("transition_durations", [])
 
                 n = len(survived)
                 seen = set()
@@ -1285,13 +1390,13 @@ def run_full_analysis(
                     story_order = clean_order
                     story_roles = clean_roles
                     story_reasoning = parsed_order.get('reasoning', '')
-                story_transitions = llm_transitions
-                story_transition_durations = llm_durations
+                    story_transitions = llm_transitions
+                    story_transition_durations = llm_durations
                     logging.info(f"Story order: {story_order}")
                     logging.info(f"Roles:       {story_roles}")
                     logging.info(f"Reasoning:   {story_reasoning}")
-                if story_transitions:
-                    logging.info(f"LLM Transitions: {story_transitions}")
+                    if story_transitions:
+                        logging.info(f"LLM Transitions: {story_transitions}")
                 else:
                     logging.info(f"Story order: LLM returned no usable indices — keeping original.")
         except Exception as e:
@@ -1659,8 +1764,8 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                     beat_windows = []
                     if beat_map and beat_map.beat_times:
                         total_vid_dur = sum(v.get("duration_sec", 0) for v in video_infos)
-                        # We limit the target duration to the total video available or 15s max reel length
-                        target_dur = min(total_vid_dur, 15.0) 
+                        # We force the target duration to be at least 20s as requested
+                        target_dur = max(20.0, total_vid_dur)
                         
                         beat_windows = build_beat_windows(
                             beat_times=beat_map.beat_times,
@@ -1766,7 +1871,13 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                 from app.services.stitch_service import build_reel_from_segments
                 
                 # Stitch the (possibly beat-snapped) final_segs
-                build_reel_from_segments(final_segs, clips_dir, reel_path)
+                build_reel_from_segments(
+                    best_segments=final_segs, 
+                    clips_dir=clips_dir, 
+                    reel_path=reel_path,
+                    bgm_path=bgm_path_str,
+                    bgm_start_sec=bgm_start_sec
+                )
                 
                 if reel_path.exists():
                     logging.info("  📤 [Pipeline] Uploading final video to MinIO...")

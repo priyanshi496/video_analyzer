@@ -508,6 +508,8 @@ CRITICAL RULE 2: Match mood/duration to the window.
       "reason": "Switching to a different source for contrast on the next beat."
     }}
   ],
+  "transitions": ["zoom_in"],
+  "transition_durations": [0.3],
   "reasoning": "Explain why the hook works and transitions...",
   "audio_reasoning": "Explain how the clip sequence specifically aligns with the music."
 }}
@@ -525,6 +527,8 @@ CRITICAL RULE 2: Match mood/duration to the window.
   "order": [4, 1, 0, 6, 2, 7, 5, 8],
   "roles": ["hook", "build", "payoff"],
   "energy_flow": ["dramatic", "calm", "epic"],
+  "transitions": ["fade", "zoom_in"],
+  "transition_durations": [0.3, 0.4],
   "reasoning": "Explain why the hook works and transitions...",
   "audio_reasoning": "Explain how the clip sequence specifically aligns with the music."
 }}
@@ -617,17 +621,7 @@ No markdown.
 No explanations outside JSON.
 No code fences.
 
-{{
-  "removed_clips": [],
-  "narrative_template": "State the overarching template you chose (e.g., 'Arrival to Departure', 'Day to Night', etc.)",
-  "full_story": "2-3 sentence cinematic description of the emotional progression of the reel",
-  "order": [4, 1, 0, 6, 2, 7, 5, 8], // MUST contain ALL survived clip indices.
-  "roles": ["hook", "build", "build", "build", "build", "build", "build", "payoff"],
-  "energy_flow": ["dramatic", "movement", "calm", "atmospheric", "steady", "curious", "intense", "epic"],
-  "transitions": ["fade", "zoom_dissolve", "dissolve", "cut", "zoom_in", "fade", "circle_crop"], // Transition name between consecutive clips in order. Length MUST be exactly len(order) - 1. Choose mostly FLUID transitions: fade, dissolve, zoom_dissolve, zoom_in, zoom_out, circle_crop, cut (50ms micro-fade). Avoid wipes/slides unless high-action.
-  "transition_durations": [0.5, 0.4, 0.5, 0.05, 0.5, 0.5, 0.5], // Duration of each transition in seconds. Length MUST be exactly len(order) - 1.
-  "reasoning": "Explain how the sequence satisfies the USER EDITING DIRECTIVES."
-}}
+{json_schema}
 
 CRITICAL RULES:
 - order and roles MUST be same length
@@ -827,64 +821,7 @@ No markdown.
 No explanations outside JSON.
 No code fences.
 
-{{
-  "removed_clips": [
-    {{
-      "clip": 3,
-      "reason": "visually repetitive and weaker than clip 7"
-    }}
-  ],
-
-  "narrative_template": "State the overarching template you chose (e.g., 'Arrival to Departure', 'Day to Night', etc.)",
-
-  "full_story": "2-3 sentence cinematic description of the emotional progression of the reel",
-
-  "order": [4, 1, 0, 6, 2, 7, 5, 8], // MUST contain ALL {len(segments)} clip indices (0 to {len(segments)-1}). Do NOT skip any!
-
-  "roles": [
-    "hook",
-    "build",
-    "build",
-    "build",
-    "build",
-    "build",
-    "build",
-    "payoff"
-  ],
-
-  "energy_flow": [
-    "dramatic",
-    "movement",
-    "calm",
-    "atmospheric",
-    "steady",
-    "curious",
-    "intense",
-    "epic"
-  ],
-
-  "transitions": [
-    "fade",
-    "zoom_dissolve",
-    "dissolve",
-    "cut",
-    "zoom_in",
-    "fade",
-    "circle_crop"
-  ], // Transition name between consecutive clips in order. Length MUST be exactly len(order) - 1. Choose mostly FLUID transitions: fade, dissolve, zoom_dissolve, zoom_in, zoom_out, circle_crop, cut. Avoid wipes/slides unless high-action.
-
-  "transition_durations": [
-    0.5,
-    0.4,
-    0.5,
-    0.05,
-    0.5,
-    0.5,
-    0.5
-  ], // Duration of each transition in seconds. Length MUST be exactly len(order) - 1.
-
-  "reasoning": "Explain why the hook works, why transitions feel emotionally effective, how contrast was used, why clips were removed, and why the ending feels satisfying."
-}}
+{json_schema}
 
 CRITICAL RULES:
 - order and roles MUST be same length

@@ -116,6 +116,7 @@ def snap_segments_to_beats(
                 logger.info(f"  [BeatSync] Seg {i:02d}: no valid beat found near target audio playhead {target_audio_playhead:.3f}s — keep original.")
             current_output_playhead += original_dur
             total_skipped += 1
+            snapped.append(seg)
             continue
 
         distance = abs(best_beat - target_audio_playhead)
@@ -128,6 +129,7 @@ def snap_segments_to_beats(
                 )
             current_output_playhead += original_dur
             total_skipped += 1
+            snapped.append(seg)
             continue
 
         # Snap output playhead to this beat
@@ -148,6 +150,7 @@ def snap_segments_to_beats(
         
         current_output_playhead += snapped_dur
         total_snapped += 1
+        snapped.append(seg)
 
     logger.info(
         f"  [BeatSync] Snapping complete: "
