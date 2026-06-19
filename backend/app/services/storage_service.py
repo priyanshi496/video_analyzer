@@ -23,8 +23,13 @@ class StorageService:
             try:
                 self.s3_client.head_bucket(Bucket=bucket)
             except ClientError:
-                logger.info(f"Bucket {bucket} does not exist. Creating it.")
-                self.s3_client.create_bucket(Bucket=bucket)
+                try:
+                    logger.info(f"Bucket {bucket} does not exist. Creating it.")
+                    self.s3_client.create_bucket(Bucket=bucket)
+                except Exception as e:
+                    logger.warning(f"Failed to create bucket {bucket}: {e}")
+            except Exception as e:
+                logger.warning(f"Could not connect to Minio endpoint or check bucket {bucket}. Skipping. Error: {e}")
 
     def generate_presigned_url(self, object_key: str, expiration: int = 3600, bucket: str = None) -> str:
         target_bucket = bucket or self.bucket_name
@@ -47,6 +52,7 @@ class StorageService:
         import io
         file_obj = io.BytesIO(text.encode('utf-8'))
         self.s3_client.upload_fileobj(file_obj, self.llm_logs_bucket, object_key, ExtraArgs={'ContentType': 'text/markdown'})
-        return object_key
+    def download_file(self, object_key: str, local_path: str):
+        self.s3_client.download_file(self.bucket_name, object_key, local_path)
         
 storage_service = StorageService()

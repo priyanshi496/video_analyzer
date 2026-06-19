@@ -1,0 +1,9 @@
+# Drop your music files here
+
+# This folder is tracked by git (via .gitkeep) but music files are excluded.
+# Add this to your .gitignore if not already present:
+#   beat_sync/music/*.mp3
+#   beat_sync/music/*.wav
+#   beat_sync/music/*.aac
+#   beat_sync/music/*.flac
+#   beat_sync/music/*.ogg

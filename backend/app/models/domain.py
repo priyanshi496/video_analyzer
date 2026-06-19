@@ -51,6 +51,9 @@ class Project(Base):
     media_assets = relationship("MediaAsset", back_populates="project")
     analysis_jobs = relationship("AnalysisJob", back_populates="project")
     user = relationship("User", back_populates="projects")
+    
+    audio_object_key = Column(String, nullable=True)
+    audio_filename = Column(String, nullable=True)
 
 
 

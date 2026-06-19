@@ -30,6 +30,7 @@ from app.services.logger_service import (
     log_vision_call,
     log_story_order_call,
     write_run_summary,
+    write_beat_sync_log,
 )
 
 CONFIG = {
@@ -303,6 +304,7 @@ def analyze_window(
     video_quality_map: dict,
     chunk_label: str = "",
     reference_paths: list = None,
+    audio_analysis: dict = None,
 ) -> tuple:
     """
     Analyze one time window. Returns (frame_meta, parsed_dict) — never None.
@@ -328,7 +330,7 @@ def analyze_window(
     payload_images = [f["path"] for f in frame_meta] + reference_paths[:ref_slots]
     window_info    = dict(info, duration_sec=window_sec)
     ref_sent       = reference_paths[:ref_slots]
-    prompt         = build_timeline_prompt(window_info, frame_meta, ref_sent, video_quality_map)
+    prompt         = build_timeline_prompt(window_info, frame_meta, ref_sent, video_quality_map, audio_analysis=audio_analysis)
 
     parsed = None
     raw = None
@@ -732,6 +734,7 @@ def process_single_video(
     api_key: str,
     video_quality_map: dict,
     reference_paths: list,
+    audio_analysis: dict = None,
 ) -> dict:
     # Check cache first thread-safely
     with CACHE_LOCK:
@@ -797,7 +800,7 @@ def process_single_video(
 
     if dur <= chunk_window:
         fm, parsed     = analyze_window(info, 0.0, dur, api_key, video_quality_map,
-                                        reference_paths=reference_paths)
+                                        reference_paths=reference_paths, audio_analysis=audio_analysis)
         parsed         = auto_recover_segments(parsed)
         all_frame_meta = fm
         chunk_analyses = [parsed]
@@ -816,7 +819,7 @@ def process_single_video(
             label = f"chunk{ci:02d}"
             logging.info(f"   Chunk {ci+1}/{len(starts)}: [{start:.1f}s–{start+window:.1f}s]")
             fm, parsed = analyze_window(info, start, window, api_key, video_quality_map,
-                                        chunk_label=label, reference_paths=reference_paths)
+                                        chunk_label=label, reference_paths=reference_paths, audio_analysis=audio_analysis)
             parsed = auto_recover_segments(parsed)
             parsed = offset_segments(parsed, start)
             all_frame_meta += fm
@@ -866,6 +869,8 @@ def run_full_analysis(
     directives: str = "",
     use_uploaded_order: bool = False,
     progress_callback = None,
+    audio_analysis: dict = None,
+    beat_windows: list = None,
 ) -> list:
     """
     Run process_single_video for all videos in parallel, then build final
@@ -880,7 +885,7 @@ def run_full_analysis(
     max_workers = min(len(video_infos) or 1, CONFIG.get("max_parallel_vision_calls", 3))
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures = [
-            ex.submit(process_single_video, info, api_key, video_quality_map, reference_paths)
+            ex.submit(process_single_video, info, api_key, video_quality_map, reference_paths, audio_analysis)
             for info in video_infos
         ]
         import concurrent.futures
@@ -1134,10 +1139,11 @@ def run_full_analysis(
     story_order = list(range(len(survived)))
     story_roles = ["clip"] * len(survived)
     story_reasoning = ""
+    parsed_order = None
 
     if len(survived) >= 2 and not use_uploaded_order:
         logging.info("\nRequesting story order from model...")
-        story_prompt = build_story_order_prompt(survived, all_results, directives, focus)
+        story_prompt = build_story_order_prompt(survived, all_results, directives, focus, audio_analysis, beat_windows)
         t0 = time.time()
         raw_order = None
         story_model = CONFIG.get("story_order_model", CONFIG["model"])
@@ -1157,40 +1163,87 @@ def run_full_analysis(
                 parse_error=None,
                 duration_sec=duration,
             )
-            order = parsed_order.get("order", [])
-            roles = parsed_order.get("roles", [])
+            # ── Handle Beat Assignments (if present) ──
+            if parsed_order and "beat_assignments" in parsed_order and beat_windows:
+                logging.info(f"  [Pipeline] Applying {len(parsed_order['beat_assignments'])} beat window assignments from LLM...")
+                clean_order = []
+                clean_roles = []
+                seen = set()
+                
+                # We sort the beat assignments by window_index to ensure chronological flow
+                assignments = sorted(parsed_order["beat_assignments"], key=lambda x: x.get("window_index", 0))
+                
+                for assignment in assignments:
+                    idx = assignment.get("clip_index")
+                    w_idx = assignment.get("window_index")
+                    
+                    if isinstance(idx, int) and 0 <= idx < len(survived) and idx not in seen:
+                        window = next((w for w in beat_windows if w["window_index"] == w_idx), None)
+                        if window:
+                            clean_order.append(idx)
+                            clean_roles.append("assigned")
+                            seen.add(idx)
+                            
+                            # Trim the original segment strictly to match the assigned window duration
+                            seg = survived[idx]
+                            orig_start = float(seg.get("start_sec", 0.0))
+                            win_dur = float(window["duration"])
+                            
+                            seg["end_sec"] = orig_start + win_dur
+                            seg["story_role"] = assignment.get("reason", "assigned")
+                            seg["_beat_window_start"] = window["start_sec"]
+                            seg["_beat_window_end"] = window["end_sec"]
+                            seg["_beat_snapped"] = True
+                            
+                # Append any remaining clips that the LLM missed but we want to keep
+                missing = [i for i in range(len(survived)) if i not in seen]
+                if missing:
+                    logging.info(f"  ⚠️  Story order: LLM missed indices {missing} — appending them at end")
+                    for idx in missing:
+                        clean_order.append(idx)
+                        clean_roles.append("build")
 
-            # ── Lenient validation: accept valid subset, append missing indices ──
-            n = len(survived)
-            # Filter to only valid, in-range, distinct indices
-            seen = set()
-            clean_order = []
-            clean_roles = []
-            for pos, idx in enumerate(order):
-                if isinstance(idx, int) and 0 <= idx < n and idx not in seen:
-                    clean_order.append(idx)
-                    clean_roles.append(roles[pos] if pos < len(roles) else "build")
-                    seen.add(idx)
+                if clean_order:
+                    story_order = clean_order
+                    story_roles = clean_roles
+                    story_reasoning = parsed_order.get('reasoning', '')
+                    logging.info(f"Beat assignments processed. Resulting order: {story_order}")
                 else:
-                    logging.info(f"  ⚠️  Story order: dropping invalid/duplicate index {idx}")
-
-            # Append any clips the LLM forgot to include
-            missing = [i for i in range(n) if i not in seen]
-            if missing:
-                logging.info(f"  ⚠️  Story order: LLM missed indices {missing} — appending them at end")
-                for idx in missing:
-                    clean_order.append(idx)
-                    clean_roles.append("build")
-
-            if clean_order:
-                story_order = clean_order
-                story_roles = clean_roles
-                story_reasoning = parsed_order.get('reasoning', '')
-                logging.info(f"Story order: {story_order}")
-                logging.info(f"Roles:       {story_roles}")
-                logging.info(f"Reasoning:   {story_reasoning}")
+                    logging.info("Beat assignments resulted in no usable clips. Keeping original.")
+                    
             else:
-                logging.info(f"Story order: LLM returned no usable indices — keeping original.")
+                # ── Handle traditional Order ──
+                order = parsed_order.get("order", [])
+                roles = parsed_order.get("roles", [])
+
+                n = len(survived)
+                seen = set()
+                clean_order = []
+                clean_roles = []
+                for pos, idx in enumerate(order):
+                    if isinstance(idx, int) and 0 <= idx < n and idx not in seen:
+                        clean_order.append(idx)
+                        clean_roles.append(roles[pos] if pos < len(roles) else "build")
+                        seen.add(idx)
+                    else:
+                        logging.info(f"  ⚠️  Story order: dropping invalid/duplicate index {idx}")
+
+                missing = [i for i in range(n) if i not in seen]
+                if missing:
+                    logging.info(f"  ⚠️  Story order: LLM missed indices {missing} — appending them at end")
+                    for idx in missing:
+                        clean_order.append(idx)
+                        clean_roles.append("build")
+
+                if clean_order:
+                    story_order = clean_order
+                    story_roles = clean_roles
+                    story_reasoning = parsed_order.get('reasoning', '')
+                    logging.info(f"Story order: {story_order}")
+                    logging.info(f"Roles:       {story_roles}")
+                    logging.info(f"Reasoning:   {story_reasoning}")
+                else:
+                    logging.info(f"Story order: LLM returned no usable indices — keeping original.")
         except Exception as e:
             duration = time.time() - t0
             log_story_order_call(
@@ -1268,7 +1321,7 @@ def run_full_analysis(
     write_run_summary(
         all_results=all_results,
         final_segments=ordered,
-        story_order=story_order,
+        story_parsed=parsed_order,
         total_duration_sec=time.time() - pipeline_start_time,
     )
 
@@ -1341,7 +1394,7 @@ import logging
 from sqlalchemy.future import select
 from app.core.celery_app import celery_app
 from app.core.database import AsyncSessionLocal
-from app.models.domain import AnalysisJob, AnalyzedClip, JobStatus
+from app.models.domain import Project, AnalysisJob, AnalyzedClip, JobStatus
 from app.services.storage_service import storage_service
 
 @celery_app.task(bind=True)
@@ -1376,6 +1429,17 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
 
     def update_progress(p: int, status: JobStatus = None, error: str = None):
         loop.run_until_complete(_update_progress(p, status, error))
+
+    # Query project to check for custom audio file
+    async def _get_project_audio():
+        async with TaskSessionLocal() as db:
+            result = await db.execute(select(Project).filter(Project.id == project_uuid))
+            proj = result.scalar_one_or_none()
+            if proj:
+                return proj.audio_object_key, proj.audio_filename
+            return None, None
+
+    audio_object_key, audio_filename = loop.run_until_complete(_get_project_audio())
 
     try:
         update_progress(5, JobStatus.RUNNING)
@@ -1428,6 +1492,96 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
             video_quality_map = analyze_all_videos_quality(video_infos)
             # ------------------------
 
+            # --- AUDIO PRE-ANALYSIS ---
+            beat_map = None
+            audio_analysis = None
+            bgm_path_str = None
+            
+            try:
+                # Ensure beat_sync is in search path
+                beat_sync_dir = str(Path(__file__).resolve().parent.parent.parent.parent / "beat_sync")
+                if beat_sync_dir not in sys.path:
+                    sys.path.insert(0, beat_sync_dir)
+                if root_dir not in sys.path:
+                    sys.path.insert(0, root_dir)
+                
+                from beat_sync.config import BGM_PATH, VERBOSE_LOGGING
+                from beat_sync.audio_analyzer import analyze_bgm, extract_audio_energy_map, analyze_audio_hooks_with_llm, build_beat_windows
+                
+                if audio_object_key:
+                    bgm_ext = audio_filename.split('.')[-1] if audio_filename else 'mp3'
+                    bgm_local_path = os.path.join(tmpdir, f"custom_bgm.{bgm_ext}")
+                    presigned_bgm = storage_service.generate_presigned_url(audio_object_key)
+                    r_bgm = requests.get(presigned_bgm)
+                    if r_bgm.status_code == 200:
+                        with open(bgm_local_path, "wb") as f_bgm:
+                            f_bgm.write(r_bgm.content)
+                        bgm_path_str = bgm_local_path
+                        logging.info(f"  📥 [BeatSync] Downloaded custom BGM: {audio_filename} ({os.path.getsize(bgm_path_str)} bytes)")
+                    else:
+                        logging.error(f"  ❌ [BeatSync] Failed to download custom BGM (status={r_bgm.status_code}). Falling back to default.")
+                        
+                if not bgm_path_str:
+                    bgm_path_str = str(Path(BGM_PATH))
+                    logging.info(f"  🎵 [BeatSync] Using default BGM: {Path(BGM_PATH).name}")
+                
+                bgm_start_sec = 0.0
+                raw_hook_sec = 0.0
+                chosen_hook = None
+                all_hooks = []
+                energy_map_data = []
+                
+                if Path(bgm_path_str).exists():
+                    logging.info("  🎵 [BeatSync] Pre-analyzing BGM beats...")
+                    beat_map = analyze_bgm(bgm_path_str, verbose=VERBOSE_LOGGING)
+                    
+                    logging.info("  🎵 [BeatSync] Running Nemotron audio energy hook analysis...")
+                    energy_map_data = extract_audio_energy_map(bgm_path_str, num_bins=10)
+                    audio_analysis = analyze_audio_hooks_with_llm(
+                        song_name=Path(bgm_path_str).name,
+                        bpm=beat_map.tempo_bpm,
+                        duration=beat_map.total_duration_sec,
+                        energy_map=energy_map_data
+                    )
+                    all_hooks = audio_analysis.get("hooks", []) if audio_analysis else []
+                    
+                    if audio_analysis and "hooks" in audio_analysis and audio_analysis["hooks"]:
+                        hooks = audio_analysis["hooks"]
+                        best_hook = next((h for h in hooks if h.get("energy_level") == "high"), hooks[0])
+                        raw_start_sec = float(best_hook.get("start_sec", 0.0))
+                        
+                        # Snap the hook start time to the absolute nearest beat
+                        if beat_map and beat_map.beat_times:
+                            bgm_start_sec = min(beat_map.beat_times, key=lambda b: abs(b - raw_start_sec))
+                        else:
+                            bgm_start_sec = raw_start_sec
+                            
+                        logging.info(f"  🎵 [BeatSync] Setting BGM start offset to {bgm_start_sec}s (snapped to nearest beat from hook at {raw_start_sec}s)")
+                        
+                    logging.info("  🎵 [BeatSync] Audio hooks analysis complete.")
+                    
+                    # --- Build Beat Windows ---
+                    beat_windows = []
+                    if beat_map and beat_map.beat_times:
+                        total_vid_dur = sum(v.get("duration_sec", 0) for v in video_infos)
+                        # We limit the target duration to the total video available or 15s max reel length
+                        target_dur = min(total_vid_dur, 15.0) 
+                        
+                        beat_windows = build_beat_windows(
+                            beat_times=beat_map.beat_times,
+                            bgm_start_sec=bgm_start_sec,
+                            total_target_duration=target_dur,
+                            min_dur_sec=1.0,
+                            max_dur_sec=2.5,
+                            energy_map=energy_map_data
+                        )
+                        logging.info(f"  🎵 [BeatSync] Computed {len(beat_windows)} beat windows for story ordering.")
+                    
+                else:
+                    logging.warning(f"  ⚠️ [BeatSync] BGM file not found at: {bgm_path_str}")
+            except Exception as _bs_init_err:
+                logging.warning(f"  ⚠️ [BeatSync] Audio pre-analysis skipped: {_bs_init_err}")
+
             total = len(video_infos)
             completed = [0]
             lock = threading.Lock()
@@ -1444,10 +1598,51 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                     video_quality_map=video_quality_map,
                     reference_paths=[],
                     directives=directives,
-                    progress_callback=on_video_done
+                    use_uploaded_order=False,
+                    progress_callback=on_video_done,
+                    audio_analysis=audio_analysis,
+                    beat_windows=beat_windows if 'beat_windows' in locals() else None
                 )
                 
                 update_progress(90)
+                
+                beat_sync_applied = False
+                
+                if beat_map:
+                    try:
+                        from beat_sync.config import SNAP_TOLERANCE_SEC, MIN_CLIP_DURATION_SEC, VERBOSE_LOGGING
+                        from beat_sync.segment_snapper import snap_segments_to_beats
+                        
+                        logging.info("  🎵 [BeatSync] Snapping final segments to beats...")
+                        snapped_segs = snap_segments_to_beats(
+                            segments=final_segs,
+                            beat_map=beat_map,
+                            snap_tolerance_sec=SNAP_TOLERANCE_SEC,
+                            min_clip_duration_sec=MIN_CLIP_DURATION_SEC,
+                            verbose=VERBOSE_LOGGING,
+                            bgm_offset_sec=bgm_start_sec
+                        )
+                        final_segs = snapped_segs
+                        beat_sync_applied = True
+                        
+                        # Write detailed beat-sync log
+                        try:
+                            write_beat_sync_log(
+                                bgm_path=bgm_path_str or "",
+                                bgm_start_sec=bgm_start_sec,
+                                raw_hook_sec=raw_hook_sec,
+                                chosen_hook=chosen_hook,
+                                all_hooks=all_hooks,
+                                energy_map=energy_map_data,
+                                tempo_bpm=beat_map.tempo_bpm,
+                                beat_times=beat_map.beat_times,
+                                snapped_segments=snapped_segs,
+                            )
+                        except Exception as _log_err:
+                            logging.warning(f"  ⚠️ [BeatSync] Could not write beat sync log: {_log_err}")
+                    except Exception as _snap_err:
+                        logging.warning(f"  ⚠️ [BeatSync] Beat snapping skipped: {_snap_err}")
+                
                 async def _save_results(segs):
                     async with TaskSessionLocal() as db:
                         for idx, seg in enumerate(segs):
@@ -1468,7 +1663,7 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                 
                 loop.run_until_complete(_save_results(final_segs))
                 
-                # Stitch the segments into a final video summary and upload to MinIO
+                # Stitch the segments into a final video summary
                 logging.info("  🎬 [Pipeline] Generating final stitched video summary...")
                 clips_dir = Path(tmpdir) / "clips"
                 reel_path = Path(tmpdir) / "final_video.mp4"
@@ -1480,8 +1675,31 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                     sys.path.append(root_dir)
                 from stitch import build_reel_from_segments
                 
+                # Stitch the (possibly beat-snapped) final_segs
                 build_reel_from_segments(final_segs, clips_dir, reel_path)
+
+                # Now mix BGM if beat sync was successfully applied
+                if beat_sync_applied and bgm_path_str:
+                    try:
+                        from beat_sync.config import BGM_VOLUME, REPLACE_ORIGINAL_AUDIO, ORIGINAL_AUDIO_VOLUME
+                        from beat_sync.audio_mixer import mix_bgm_into_video
+                        
+                        beat_synced_path = Path(tmpdir) / "final_video_beat_synced.mp4"
+                        final_video_path = mix_bgm_into_video(
+                            video_path=str(reel_path),
+                            bgm_path=bgm_path_str,
+                            output_path=str(beat_synced_path),
+                            bgm_volume=BGM_VOLUME,
+                            replace_original_audio=REPLACE_ORIGINAL_AUDIO,
+                            original_audio_volume=ORIGINAL_AUDIO_VOLUME,
+                            bgm_start_sec=bgm_start_sec,
+                        )
+                        reel_path = Path(final_video_path)
+                        logging.info("  🎵 [BeatSync] Beat-synced video ready with BGM mixed in.")
+                    except Exception as _mix_err:
+                        logging.warning(f"  ⚠️ [BeatSync] Audio mixing failed: {_mix_err} — falling back to unmixed video.")
                 
+                reel_path = Path(reel_path)
                 if reel_path.exists():
                     logging.info("  📤 [Pipeline] Uploading final video to MinIO...")
                     object_key = f"projects/{project_id}/jobs/{job_id}/final_video.mp4"

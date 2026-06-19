@@ -25,3 +25,11 @@ __pycache__/
 .DS_Store
 
 docker-compose.yml
+
+# beat_sync — music files (keep private, tracked via .gitkeep)
+beat_sync/music/*.mp3
+beat_sync/music/*.wav
+beat_sync/music/*.aac
+beat_sync/music/*.flac
+beat_sync/music/*.ogg
+beat_sync/music/*.m4a

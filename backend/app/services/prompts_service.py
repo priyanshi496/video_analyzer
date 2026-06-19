@@ -157,14 +157,28 @@ def build_timeline_prompt(
     reference_images: list,
     video_quality_map: dict,
     directives: str = "",
+    audio_analysis: dict = None,
 ) -> str:
     directives_note = ""
     if directives:
         directives_note = f"\nUSER EDITING DIRECTIVES (YOU MUST FOLLOW THESE INSTRUCTIONS):\n{directives}\n"
 
+    audio_note = ""
+    if audio_analysis:
+        audio_note = f"""
+BACKGROUND MUSIC ANALYSIS (YOU MUST ALIGN YOUR CLIP SELECTION WITH THESE HOOKS):
+Summary: {audio_analysis.get('music_summary', '')}
+Vibe recommendation: {audio_analysis.get('vibe_recommendation', '')}
+Hooks & Energy Peaks of the BGM:
+"""
+        for h in audio_analysis.get("hooks", []):
+            audio_note += f"- {h.get('start_sec')}s to {h.get('end_sec')}s: {h.get('hook_type', 'peak')} ({h.get('energy_level', 'high')} energy) | Edit instruction: {h.get('editing_instruction', '')}\n"
+        
+        audio_note += "\nYour selection of 'best_segments' MUST align with this background music. Identify high-energy clips for hook/chorus timestamps, and softer setup/narrative clips for low-energy timestamps.\n"
+
     if video_info.get("is_image"):
         return f"""You are a master short-form video editor. Analyze this static photo for a viral social reel.
-{directives_note}
+{directives_note}{audio_note}
 Return ONLY valid JSON. No markdown, no code fences, no extra text.
 
 {{
@@ -250,7 +264,7 @@ Return ONLY valid JSON. No markdown, no code fences, no extra text.
         )
 
     return f"""You are a master short-form video editor. Extract only the best moments for a viral social reel.
-{directives_note}
+{directives_note}{audio_note}
 Return ONLY valid JSON. No markdown, no code fences, no extra text.
 
 Video duration: {duration}s.
@@ -339,7 +353,20 @@ Non-matching clips may only fill transitional/contextual roles.
     return ""
 
 
-def build_story_order_prompt(segments: list, all_results: list, directives: str = "", focus: dict = None) -> str:
+def build_story_order_prompt(segments: list, all_results: list, directives: str = "", focus: dict = None, audio_analysis: dict = None, beat_windows: list = None) -> str:
+    audio_note = ""
+    if audio_analysis:
+        audio_note = f"""
+BACKGROUND MUSIC CONTEXT:
+Summary: {audio_analysis.get('music_summary', '')}
+Vibe recommendation: {audio_analysis.get('vibe_recommendation', '')}
+Hooks & Energy Peaks of the BGM:
+"""
+        for h in audio_analysis.get("hooks", []):
+            audio_note += f"- {h.get('start_sec')}s to {h.get('end_sec')}s: {h.get('hook_type', 'peak')} ({h.get('energy_level', 'high')} energy) | Edit instruction: {h.get('editing_instruction', '')}\n"
+        
+        audio_note += "\nYour final ordering of the clips MUST align with the background music's pace and energy flow. High-energy/action clips (roles like 'payoff', 'hook') should align with the high-energy hook/chorus sections of the song. Softer detail or establishing shots should align with the low-intensity sections.\n"
+
     # ─────────────────────────────────────────────────────────────
     # SOURCE VIDEO CONTEXT
     # ─────────────────────────────────────────────────────────────
@@ -421,6 +448,65 @@ Editor Read: {(seg.get("editor_reasoning") or "")[:220] or "N/A"}
     # FINAL PROMPT
     # ─────────────────────────────────────────────────────────────
 
+    beat_windows_note = ""
+    json_schema = ""
+
+    if beat_windows:
+        beat_lines = [f"Window {w['window_index']}: {w['start_sec']}s to {w['end_sec']}s (Dur: {w['duration']}s)" for w in beat_windows]
+        beat_windows_note = f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BEAT TIMELINE SLOTS (CRITICAL)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The background music has been analyzed. The video MUST be cut precisely to these beat windows:
+{chr(10).join(beat_lines)}
+
+You MUST assign a specific clip from the inventory to EACH beat window.
+CRITICAL RULE 1: Alternate sources. DO NOT assign two consecutive windows to clips from the same SOURCE video or image.
+CRITICAL RULE 2: Match mood/duration to the window.
+"""
+        json_schema = """
+{{
+  "removed_clips": [
+    {{
+      "clip": 3,
+      "reason": "visually repetitive"
+    }}
+  ],
+  "full_story": "2-3 sentence cinematic description...",
+  "beat_assignments": [
+    {{
+      "window_index": 0,
+      "clip_index": 5,
+      "reason": "This clip has a strong approach that fits the 1.5s opening window."
+    }},
+    {{
+      "window_index": 1,
+      "clip_index": 2,
+      "reason": "Switching to a different source for contrast on the next beat."
+    }}
+  ],
+  "reasoning": "Explain why the hook works and transitions...",
+  "audio_reasoning": "Explain how the clip sequence specifically aligns with the music."
+}}
+"""
+    else:
+        json_schema = f"""
+{{
+  "removed_clips": [
+    {{
+      "clip": 3,
+      "reason": "visually repetitive"
+    }}
+  ],
+  "full_story": "2-3 sentence cinematic description...",
+  "order": [4, 1, 0, 6, 2, 7, 5, 8],
+  "roles": ["hook", "build", "payoff"],
+  "energy_flow": ["dramatic", "calm", "epic"],
+  "reasoning": "Explain why the hook works and transitions...",
+  "audio_reasoning": "Explain how the clip sequence specifically aligns with the music."
+}}
+"""
+
     temporal_note = (
         "The clips below have already been pre-sorted into a day-to-night temporal flow by the system.\n"
         "Your job is NOT to completely reorder by time — that is already done.\n"
@@ -445,9 +531,7 @@ Editor Read: {(seg.get("editor_reasoning") or "")[:220] or "N/A"}
     if directives:
         return f"""
 You are an elite cinematic short-form video editor.
-
-USER EDITING DIRECTIVES (YOU MUST FOLLOW THESE INSTRUCTIONS):
-{directives}
+{directives_note}{audio_note}
 {focus_constraint}
 
 CRITICAL INSTRUCTION FOR REASONING AND THINKING:
@@ -494,21 +578,12 @@ No markdown.
 No explanations outside JSON.
 No code fences.
 
-{{
-  "removed_clips": [],
-  "full_story": "2-3 sentence cinematic description of the emotional progression of the reel",
-  "order": [4, 1, 0, 6, 2, 7, 5, 8], // MUST contain ALL survived clip indices.
-  "roles": ["hook", "build", "build", "build", "build", "build", "build", "payoff"],
-  "energy_flow": ["dramatic", "movement", "calm", "atmospheric", "steady", "curious", "intense", "epic"],
-  "reasoning": "Explain how the sequence satisfies the USER EDITING DIRECTIVES."
-}}
+{json_schema}
 
 CRITICAL RULES:
-- order and roles MUST be same length
-- no duplicate clips in order
-- removed_clips MUST NOT appear in order
-- You MUST include ALL clips in 'order' that you did not explicitly remove in 'removed_clips'. Do NOT drop clips silently.
-- CLIP COUNT CHECK: There are {len(segments)} clips (indices 0 to {len(segments)-1}). Your 'order' array MUST contain exactly {len(segments)} minus len(removed_clips) indices.
+- removed_clips MUST NOT appear in assignments/order.
+- You MUST assign or order all survived clips appropriately.
+- CLIP COUNT CHECK: There are {len(segments)} clips. You must process all of them.
 - LOCATION GROUPING: Unless explicitly requested by the user's directives, you MUST group clips from the same physical location/scene together contiguously. Do NOT alternate or interleave locations.
 - CRITICAL: YOU MUST STRICTLY FOLLOW THESE USER EDITING DIRECTIVES:
 {directives}
@@ -518,7 +593,7 @@ CRITICAL REASONING CONSTRAINT: Your thinking block (<think>...</think>) MUST be 
 
     return f"""
 You are an elite cinematic short-form video editor.
-{directives_note}
+{directives_note}{audio_note}
 CRITICAL INSTRUCTION FOR REASONING AND THINKING:
 Keep your internal thinking process (the reasoning path before outputting JSON) extremely short, concise, and direct (maximum 3-4 sentences total). Do not write long explanations, nested logic, or repetitive drafts. Summarize your thoughts immediately and output the final JSON object.
 
@@ -697,49 +772,10 @@ No markdown.
 No explanations outside JSON.
 No code fences.
 
-{{
-  "removed_clips": [
-    {{
-      "clip": 3,
-      "reason": "visually repetitive and weaker than clip 7"
-    }}
-  ],
-
-  "full_story": "2-3 sentence cinematic description of the emotional progression of the reel",
-
-  "order": [4, 1, 0, 6, 2, 7, 5, 8], // MUST contain ALL {len(segments)} clip indices (0 to {len(segments)-1}). Do NOT skip any!
-
-  "roles": [
-    "hook",
-    "build",
-    "build",
-    "build",
-    "build",
-    "build",
-    "build",
-    "payoff"
-  ],
-
-  "energy_flow": [
-    "dramatic",
-    "movement",
-    "calm",
-    "atmospheric",
-    "steady",
-    "curious",
-    "intense",
-    "epic"
-  ],
-
-  "reasoning": "Explain why the hook works, why transitions feel emotionally effective, how contrast was used, why clips were removed, and why the ending feels satisfying."
-}}
+{json_schema}
 
 CRITICAL RULES:
-- order and roles MUST be same length
-- no duplicate clips in order
-- removed_clips MUST NOT appear in order
-- You MUST include ALL clips in 'order' that you did not explicitly remove in 'removed_clips'. Do NOT drop clips silently.
-- CLIP COUNT CHECK: There are {len(segments)} clips (indices 0 to {len(segments)-1}). Your 'order' array MUST contain exactly {len(segments)} minus len(removed_clips) indices. If you have 12 clips and removed 0, 'order' MUST have 12 entries.
+- removed_clips MUST NOT appear in assignments/order.
 - prioritize emotion over chronology
 - prioritize pacing over documentation
 - prioritize cinematic storytelling over logical sequencing

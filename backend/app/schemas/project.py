@@ -16,6 +16,8 @@ class ProjectResponse(BaseModel):
     status: ProjectStatus
     created_at: datetime
     updated_at: datetime
+    audio_object_key: Optional[str] = None
+    audio_filename: Optional[str] = None
 
     class Config:
         from_attributes = True

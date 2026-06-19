@@ -149,7 +149,7 @@ def log_story_order_call(
 def write_run_summary(
     all_results: list,
     final_segments: list,
-    story_order: Optional[list],
+    story_parsed: Optional[dict],
     total_duration_sec: float,
 ) -> str:
     run_id = _get_run_id()
@@ -165,7 +165,9 @@ def write_run_summary(
         "",
         f"Videos analyzed: {len(all_results)}",
         f"Best segments selected: {len(final_segments)}",
-        f"Story order: {story_order}",
+        f"Story order: {story_parsed.get('order') if story_parsed else None}",
+        f"Story reasoning: {story_parsed.get('reasoning') if story_parsed else 'N/A'}",
+        f"Audio reasoning: {story_parsed.get('audio_reasoning') if story_parsed else 'N/A'}",
         "",
     ]
 
@@ -254,4 +256,142 @@ def write_run_summary(
         f.write(md_content)
         
     logging.info(f"  [logger_service] Run summary → {object_key}")
+    return object_key
+
+
+def write_beat_sync_log(
+    bgm_path: str,
+    bgm_start_sec: float,
+    raw_hook_sec: float,
+    chosen_hook: Optional[dict],
+    all_hooks: list,
+    energy_map: list,
+    tempo_bpm: float,
+    beat_times: list,
+    snapped_segments: list,
+) -> str:
+    """
+    Write a dedicated BEATSYNC.md log explaining:
+      - Which audio hook was chosen and WHY
+      - The full energy map of the track
+      - Every clip's beat-snap decision (which beat, how much it moved)
+    """
+    run_id = _get_run_id()
+    object_key = f"logs/{run_id}/BEATSYNC.md"
+
+    divider = "═" * 80
+    lines = [
+        divider,
+        "  🎵  BEAT SYNC ANALYSIS LOG",
+        f"  time    : {datetime.now().isoformat()}",
+        f"  file    : {Path(bgm_path).name}",
+        f"  tempo   : {tempo_bpm:.1f} BPM",
+        divider,
+        "",
+        "━━━ HOOK SELECTION ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "",
+        f"  Raw hook timestamp from LLM  : {raw_hook_sec:.3f}s",
+        f"  Snapped to nearest beat       : {bgm_start_sec:.3f}s",
+        f"  BGM audio will start at       : {bgm_start_sec:.3f}s (skipping the intro)",
+        "",
+    ]
+
+    if chosen_hook:
+        lines += [
+            "  Selected hook details:",
+            f"    type           : {chosen_hook.get('hook_type', 'N/A')}",
+            f"    energy_level   : {chosen_hook.get('energy_level', 'N/A')}",
+            f"    start_sec      : {chosen_hook.get('start_sec', 'N/A')}s",
+            f"    end_sec        : {chosen_hook.get('end_sec', 'N/A')}s",
+            f"    editing note   : {chosen_hook.get('editing_instruction', 'N/A')}",
+            "",
+            "  Why this hook?",
+            "    The LLM scans the audio energy map and picks the first 'high' energy segment.",
+            "    Starting the music here puts the viewer immediately in a high-energy moment",
+            "    (chorus / drop) instead of sitting through a slow intro.",
+        ]
+    
+    lines += [
+        "",
+        "━━━ ALL HOOKS DETECTED IN TRACK ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "",
+        f"  {'#':>3}  {'Type':12}  {'Energy':8}  {'Start':>8}  {'End':>8}  Editing Instruction",
+        f"  {'─'*3}  {'─'*12}  {'─'*8}  {'─'*8}  {'─'*8}  {'─'*40}",
+    ]
+    for i, h in enumerate(all_hooks):
+        chosen_marker = " ◄ CHOSEN" if h is chosen_hook or (chosen_hook and h.get('start_sec') == chosen_hook.get('start_sec')) else ""
+        lines.append(
+            f"  {i+1:>3}  {h.get('hook_type','?'):12}  "
+            f"{h.get('energy_level','?'):8}  "
+            f"{h.get('start_sec',0):>7.1f}s  "
+            f"{h.get('end_sec',0):>7.1f}s  "
+            f"{h.get('editing_instruction','')[:40]}{chosen_marker}"
+        )
+    
+    lines += [
+        "",
+        "━━━ AUDIO ENERGY MAP ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "",
+        f"  {'#':>3}  {'Start':>8}  {'End':>8}  {'Score':>6}  {'Bar':30}  Category",
+        f"  {'─'*3}  {'─'*8}  {'─'*8}  {'─'*6}  {'─'*30}  {'─'*30}",
+    ]
+    for i, e in enumerate(energy_map):
+        score = e.get('energy_score', 0)
+        bar_len = int((score / 10.0) * 30)
+        bar = '█' * bar_len + '░' * (30 - bar_len)
+        lines.append(
+            f"  {i+1:>3}  {e.get('start_sec',0):>7.1f}s  {e.get('end_sec',0):>7.1f}s  "
+            f"{score:>6.1f}  {bar}  {e.get('description','')[:30]}"
+        )
+
+    lines += [
+        "",
+        "━━━ BEAT TIMES (first 30 beats, after hook offset) ━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "",
+    ]
+    relevant_beats = [b for b in beat_times if b >= bgm_start_sec][:30]
+    beat_line = "  " + "  ".join(f"{b:.3f}s" for b in relevant_beats)
+    lines.append(beat_line)
+
+    lines += [
+        "",
+        "━━━ BEAT WINDOW → CLIP MAPPING ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "",
+        f"  {'Pos':>3}  {'Window (Beat Times)':>22}  {'Dur':>5}  {'Clip Source':>20}  {'Seg Time':>15}  {'LLM Beat Reason'}",
+        f"  {'─'*3}  {'─'*22}  {'─'*5}  {'─'*20}  {'─'*15}  {'─'*30}",
+    ]
+    for i, seg in enumerate(snapped_segments):
+        if not seg.get('is_used', True):
+            continue
+        
+        src = Path(seg.get('video_path', '?')).stem[:20]
+        orig_start = seg.get('start_sec', 0)
+        orig_end = seg.get('end_sec', 0)
+        win_start = seg.get('_beat_window_start')
+        win_end = seg.get('_beat_window_end')
+        reason = str(seg.get('story_role', ''))[:40] # story_role holds the assigned reason
+        
+        if win_start is not None and win_end is not None:
+            win_str = f"{win_start:.3f}s → {win_end:.3f}s"
+            dur_str = f"{(win_end - win_start):.2f}s"
+        else:
+            win_str = "Legacy Snap Fallback"
+            dur_str = f"{(orig_end - orig_start):.2f}s"
+            
+        seg_time = f"{orig_start:.2f}s–{orig_end:.2f}s"
+        
+        lines.append(
+            f"  {i:>3}  {win_str:>22}  {dur_str:>5}  {src:>20}  {seg_time:>15}  {reason}"
+        )
+
+    lines += ["", divider]
+    text_content = "\n".join(lines)
+    md_content = f"```text\n{text_content}\n```"
+
+    log_file_path = Path(object_key)
+    log_file_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_file_path, "w", encoding="utf-8") as f:
+        f.write(md_content)
+
+    logging.info(f"  [logger_service] Beat sync log → {object_key}")
     return object_key

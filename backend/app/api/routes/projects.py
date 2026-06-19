@@ -207,3 +207,35 @@ async def list_media(
 
     return response
 
+
+@router.post("/{project_id}/audio", response_model=ProjectResponse)
+async def upload_project_audio(
+    project_id: uuid.UUID,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Verify project exists and belongs to the user (or is unowned)
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            or_(Project.user_id == current_user.id, Project.user_id == None)
+        )
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Upload audio file to MinIO
+    object_key = f"projects/{project_id}/audio/{uuid.uuid4()}_{file.filename}"
+    await asyncio.to_thread(storage_service.upload_file_obj, file.file, object_key, file.content_type)
+
+    # Save details to the project model
+    project.audio_object_key = object_key
+    project.audio_filename = file.filename
+    await db.commit()
+    await db.refresh(project)
+
+    return project
+
+
