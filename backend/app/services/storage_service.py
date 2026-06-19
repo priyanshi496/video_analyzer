@@ -52,7 +52,7 @@ class StorageService:
         import io
         file_obj = io.BytesIO(text.encode('utf-8'))
         self.s3_client.upload_fileobj(file_obj, self.llm_logs_bucket, object_key, ExtraArgs={'ContentType': 'text/markdown'})
-    def download_file(self, object_key: str, local_path: str):
-        self.s3_client.download_file(self.bucket_name, object_key, local_path)
+        return object_key
         
 storage_service = StorageService()
+

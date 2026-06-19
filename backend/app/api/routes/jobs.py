@@ -1,7 +1,7 @@
 from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Literal
 import uuid
 from sqlalchemy import or_
 
@@ -17,9 +17,14 @@ from app.core.security import get_current_user
 
 router = APIRouter()
 
+class MusicRequest(BaseModel):
+    mode: Literal["ai", "custom", "none"] = "ai"
+    custom_query: Optional[str] = None      # e.g. "Satranga Arijit Singh"
+
 class AnalyzeRequest(BaseModel):
     vibe: VibePreset = VibePreset.CINEMATIC  # Preset vibe for the reel
     directives: str = ""                    # Custom free-form description (overrides/supplements vibe hint)
+    music: MusicRequest = MusicRequest()
 
 class JobStatusResponse(BaseModel):
     id: str
@@ -85,7 +90,8 @@ async def start_analysis_job(
             job_id=str(job.id),
             media_assets=assets_data,
             directives=request.directives,
-            vibe=request.vibe.value
+            vibe=request.vibe.value,
+            music_config=request.music.dict()
         )
 
         return JobStatusResponse(
