@@ -9,10 +9,23 @@ logger = logging.getLogger(__name__)
 
 
 def get_video_duration(video_path: str) -> float:
-    """Uses ffprobe to extract video duration, with cv2 fallback."""
+    """Uses OpenCV to mathematically compute exact video frame duration, with ffprobe fallback."""
+    import cv2
+    cap = cv2.VideoCapture(str(video_path))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    cap.release()
+    
+    # If OpenCV successfully calculates a valid duration, use it.
+    # This guarantees exact frame alignment for xfade transitions.
+    if fps > 0 and frame_count > 0:
+        return float(frame_count) / float(fps)
+        
+    # Fallback to FFprobe metadata container duration
     cmd = [
         "ffprobe", "-v", "error",
-        "-show_entries", "format=duration",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=duration",
         "-of", "default=noprint_wrappers=1:nokey=1",
         str(video_path)
     ]
@@ -22,14 +35,7 @@ def get_video_duration(video_path: str) -> float:
             return float(res.stdout.strip())
         except ValueError:
             pass
-    # Fallback to OpenCV
-    import cv2
-    cap = cv2.VideoCapture(str(video_path))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-    cap.release()
-    if fps > 0 and frame_count > 0:
-        return frame_count / fps
+
     raise ValueError(f"Could not read video duration for: {video_path}")
 
 
@@ -284,8 +290,141 @@ def stitch_clips(
     if not clip_paths:
         raise RuntimeError("No clips available to stitch.")
 
-    logger.info(f"Stitching {len(clip_paths)} clips with safe concat demuxer (no transitions)...")
-    return _stitch_concat_demuxer(clip_paths, output_path)
+    # 1. Determine if we should use transitions
+    use_transitions = False
+    if transitions:
+        for t in transitions:
+            if t and t != "cut":
+                use_transitions = True
+                break
+
+    if not use_transitions:
+        return _stitch_concat_demuxer(clip_paths, output_path)
+
+    # 2. Render with transitions
+    try:
+        logger.info(f"Rendering {len(clip_paths)} clips with xfade transitions...")
+        durations = []
+        for p in clip_paths:
+            durations.append(get_video_duration(p))
+
+        n = len(clip_paths)
+        t_types = []
+        t_durs = []
+        
+        # Map narrative rules/UI tags to actual FFmpeg xfade transition filters
+        TRANSITION_MAP = {
+            "fade": "fade",
+            "dissolve": "dissolve",
+            "zoom_in": "zoomin",
+            "zoom_out": "fade",
+            "zoom_dissolve": "zoomin",
+            "wipe_left": "wipeleft",
+            "wipe_right": "wiperight",
+            "slide_left": "slideleft",
+            "slide_right": "slideright",
+            "circle_crop": "circlecrop",
+            "circleopen": "circleopen",
+            "circleclose": "circleclose",
+            "cut": "fade",
+        }
+
+        for i in range(n - 1):
+            t_type = transitions[i] if i < len(transitions) else "cut"
+            t_dur = transition_durations[i] if (transition_durations and i < len(transition_durations)) else 0.5
+            
+            if t_type == "cut":
+                mapped_type = "fade"
+                mapped_dur = 0.05  # 50ms micro-fade to act as pop-free cut
+            elif t_type == "fade":
+                # Only use a real fade (dip to black) if it's the transition to the final shot (last transition)
+                if i == n - 2:
+                    mapped_type = "fade"
+                else:
+                    mapped_type = "dissolve"
+                mapped_dur = t_dur
+            else:
+                mapped_type = TRANSITION_MAP.get(t_type, "dissolve")
+                mapped_dur = t_dur
+                
+            # Clamp duration to half the length of the shorter clip
+            max_dur = min(durations[i], durations[i+1]) / 2.0
+            if mapped_dur > max_dur:
+                mapped_dur = max_dur
+                
+            t_types.append(mapped_type)
+            t_durs.append(mapped_dur)
+
+        # Build filter complex
+        video_filters = []
+        audio_filters = []
+        
+        # Bookend: Fade-in from black at start of first clip (video/audio)
+        video_filters.append("[0:v]fade=t=in:st=0:d=1.0[v_in_faded]")
+        audio_filters.append("[0:a]afade=t=in:st=0:d=1.0[a_in_faded]")
+        
+        cumulative_offset = 0.0
+
+        for i in range(n - 1):
+            # Offset formula: O_0 = L_0 - D_0, O_i = O_{i-1} + L_i - D_i
+            offset = round(cumulative_offset + durations[i] - t_durs[i], 3)
+            offset = max(0.0, offset)
+
+            v_in1 = "[v_in_faded]" if i == 0 else f"[vfade{i-1}]"
+            a_in1 = "[a_in_faded]" if i == 0 else f"[afade{i-1}]"
+
+            v_in2 = f"[{i+1}:v]"
+            a_in2 = f"[{i+1}:a]"
+
+            v_out = "[vout_temp]" if i == n - 2 else f"[vfade{i}]"
+            a_out = "[aout_temp]" if i == n - 2 else f"[afade{i}]"
+
+            video_filters.append(
+                f"{v_in1}{v_in2}xfade=transition={t_types[i]}:duration={t_durs[i]}:offset={offset}{v_out}"
+            )
+            audio_filters.append(
+                f"{a_in1}{a_in2}acrossfade=d={t_durs[i]}{a_out}"
+            )
+
+            # Keep track of the timeline position of the next clip in the output
+            cumulative_offset = offset
+
+        # Bookend: Fade-out to black at end of last clip (video/audio)
+        total_duration = round(cumulative_offset + durations[-1], 3)
+        fade_out_start = max(0.0, round(total_duration - 1.0, 3))
+        
+        video_filters.append(f"[vout_temp]fade=t=out:st={fade_out_start}:d=1.0[vout]")
+        audio_filters.append(f"[aout_temp]afade=t=out:st={fade_out_start}:d=1.0[aout]")
+
+        filter_complex = ";".join(video_filters + audio_filters)
+
+        cmd = ["ffmpeg", "-y"]
+        for p in clip_paths:
+            cmd.extend(["-i", p])
+        cmd.extend(["-filter_complex", filter_complex])
+        cmd.extend(["-map", "[vout]", "-map", "[aout]"])
+        cmd.extend([
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-ar", "44100",
+            "-ac", "2",
+            "-t", str(total_duration),
+            str(output_path)
+        ])
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"FFmpeg xfade failed:\n{result.stderr}")
+            
+        logger.info("Successfully stitched clips with xfade transitions.")
+        return str(output_path)
+
+    except Exception as e:
+        logger.error(f"Xfade transition stitching failed: {e}. Falling back to plain concat...")
+        return _stitch_concat_demuxer(clip_paths, output_path)
 
 
 def build_reel_from_segments(
