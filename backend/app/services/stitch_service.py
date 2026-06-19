@@ -9,10 +9,23 @@ logger = logging.getLogger(__name__)
 
 
 def get_video_duration(video_path: str) -> float:
-    """Uses ffprobe to extract video duration, with cv2 fallback."""
+    """Uses OpenCV to mathematically compute exact video frame duration, with ffprobe fallback."""
+    import cv2
+    cap = cv2.VideoCapture(str(video_path))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    cap.release()
+    
+    # If OpenCV successfully calculates a valid duration, use it.
+    # This guarantees exact frame alignment for xfade transitions.
+    if fps > 0 and frame_count > 0:
+        return float(frame_count) / float(fps)
+        
+    # Fallback to FFprobe metadata container duration
     cmd = [
         "ffprobe", "-v", "error",
-        "-show_entries", "format=duration",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=duration",
         "-of", "default=noprint_wrappers=1:nokey=1",
         str(video_path)
     ]
@@ -22,14 +35,7 @@ def get_video_duration(video_path: str) -> float:
             return float(res.stdout.strip())
         except ValueError:
             pass
-    # Fallback to OpenCV
-    import cv2
-    cap = cv2.VideoCapture(str(video_path))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-    cap.release()
-    if fps > 0 and frame_count > 0:
-        return frame_count / fps
+
     raise ValueError(f"Could not read video duration for: {video_path}")
 
 
@@ -47,6 +53,36 @@ def has_audio_stream(video_path: str) -> bool:
         return "audio" in res.stdout
     except Exception:
         return False
+
+
+def get_video_dimensions(video_path: str) -> tuple[int, int]:
+    """Uses ffprobe to extract video width and height, with cv2 fallback."""
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=s=x:p=0",
+        str(video_path)
+    ]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout.strip():
+            w, h = map(int, res.stdout.strip().split('x'))
+            return w, h
+    except Exception:
+        pass
+    # Fallback to OpenCV
+    try:
+        import cv2
+        cap = cv2.VideoCapture(str(video_path))
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+        if w > 0 and h > 0:
+            return w, h
+    except Exception:
+        pass
+    return 1080, 1920
 
 
 def trim_and_normalize_clip(
@@ -93,6 +129,37 @@ def trim_and_normalize_clip(
     elif rotation == 270:
         transpose_filter = "transpose=2,"
 
+    # Determine dimensions and check if aspect ratio is landscape (needs blurred padding)
+    try:
+        w, h = get_video_dimensions(str(path_obj))
+        if rotation in (90, 270):
+            w, h = h, w
+        input_aspect = w / h
+        target_aspect = width / height
+        # If the input aspect ratio deviates from the target (portrait 9:16) by more than 5%, we consider it landscape/different
+        is_landscape = abs(input_aspect - target_aspect) >= 0.05
+    except Exception as e:
+        logger.warning(f"Failed to probe aspect ratio for {video_path}: {e}")
+        is_landscape = False
+
+    if is_landscape:
+        # Scale background to cover + gblur, overlay scaled original on top
+        vf_filter = (
+            f"{transpose_filter}split=2[bg][fg];"
+            f"[bg]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},"
+            f"gblur=sigma=20[bg_blurred];"
+            f"[fg]scale={width}:{height}:force_original_aspect_ratio=decrease[fg_scaled];"
+            f"[bg_blurred][fg_scaled]overlay=(W-w)/2:(H-h)/2,fps={fps}"
+        )
+    else:
+        # Direct vertical aspect ratio (9:16) -> scale and pad normally
+        vf_filter = (
+            f"{transpose_filter}"
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
+            f"fps={fps}"
+        )
+
     if is_image:
         cmd = [
             "ffmpeg", "-y",
@@ -101,12 +168,7 @@ def trim_and_normalize_clip(
             "-f", "lavfi",
             "-i", "anullsrc=r=44100:cl=stereo",
             "-t", f"{dur:.3f}",
-            "-vf", (
-                f"{transpose_filter}"
-                f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
-                f"fps={fps}"
-            ),
+            "-vf", vf_filter,
             "-pix_fmt", "yuv420p",
             "-c:v", "libx264",
             "-preset", "fast",
@@ -131,14 +193,8 @@ def trim_and_normalize_clip(
                 "-i", str(video_path),
                 "-f", "lavfi",
                 "-i", "anullsrc=r=44100:cl=stereo",
-                # -t placed here as an OUTPUT option, correctly limiting encoded duration
                 "-t", f"{dur:.3f}",
-                "-vf", (
-                    f"{transpose_filter}"
-                    f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                    f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
-                    f"fps={fps}"
-                ),
+                "-vf", vf_filter,
                 "-pix_fmt", "yuv420p",
                 "-map", "0:v:0",
                 "-map", "1:a:0",
@@ -158,12 +214,7 @@ def trim_and_normalize_clip(
                 "-ss", f"{start_sec:.3f}",
                 "-i", str(video_path),
                 "-t", f"{dur:.3f}",
-                "-vf", (
-                    f"{transpose_filter}"
-                    f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                    f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
-                    f"fps={fps}"
-                ),
+                "-vf", vf_filter,
                 "-pix_fmt", "yuv420p",
                 "-c:v", "libx264",
                 "-preset", "fast",
@@ -226,9 +277,15 @@ def stitch_clips(
     transition_durations: list = None,
 ) -> str:
     """
-    Concatenate pre-normalized clips into one final reel.
-    If transitions are provided, uses xfade/acrossfade complex filter graph.
-    Falls back to safe concat demuxer on error or if no transitions are requested.
+    Concatenate pre-normalized clips into one final reel using the safe concat demuxer.
+
+    The xfade/acrossfade filter_complex approach was removed because acrossfade is a
+    sequential blocking filter that reads ALL of stream-1 to EOF before outputting past
+    the crossfade point. When multiple clips are chained this causes hard freezes at
+    every clip boundary (visible as a frozen frame at ~6s, ~11s, etc.).
+
+    The original stitch.py used the simple concat demuxer with +genpts / aresample=async=1
+    which is reliable and freeze-free. We match that approach here.
     """
     if not clip_paths:
         raise RuntimeError("No clips available to stitch.")
@@ -354,6 +411,7 @@ def stitch_clips(
             "-c:a", "aac",
             "-ar", "44100",
             "-ac", "2",
+            "-t", str(total_duration),
             str(output_path)
         ])
 

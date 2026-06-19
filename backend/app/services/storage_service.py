@@ -47,6 +47,17 @@ class StorageService:
         import io
         file_obj = io.BytesIO(text.encode('utf-8'))
         self.s3_client.upload_fileobj(file_obj, self.llm_logs_bucket, object_key, ExtraArgs={'ContentType': 'text/markdown'})
-        return object_key
+    def object_exists(self, object_key: str, bucket: str = None) -> bool:
+        target_bucket = bucket or self.bucket_name
+        try:
+            self.s3_client.head_object(Bucket=target_bucket, Key=object_key)
+            return True
+        except ClientError:
+            return False
+
+    def download_file(self, object_key: str, local_path: str, bucket: str = None):
+        target_bucket = bucket or self.bucket_name
+        self.s3_client.download_file(target_bucket, object_key, local_path)
         
 storage_service = StorageService()
+
