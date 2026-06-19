@@ -4,7 +4,7 @@ from sqlalchemy import text
 import json
 
 async def main():
-    engine = create_async_engine('postgresql+asyncpg://user:password@localhost:5433/video_analyzer')
+    engine = create_async_engine('postgresql+asyncpg://user:password@localhost:5434/video_analyzer')
     async with engine.connect() as conn:
         print("--- Last Completed Job Details ---")
         result = await conn.execute(text("SELECT id, project_id, status, progress FROM analysis_jobs WHERE status = 'COMPLETED' ORDER BY created_at DESC LIMIT 1"))

@@ -270,9 +270,9 @@ Rules:
 - Prefer SETTLED/LINEAR_FORWARD frames. Avoid CHAOTIC/WHIP_PAN frames.
 - Reject: blurry-throughout, floor-only, empty walking-only shots.
 - Clip Durations (CRITICAL PACING):
-  - High-energy/active footage (e.g. pool action, table tennis/ping pong, sports, rapid movement): MUST be fast and dynamic, exactly 1.5–2.0 seconds (e.g. start=10.0, end=11.5 or 12.0).
-  - Slower atmospheric/cinematic beauty shots (e.g. temples, candles, sunset, reflection): Let them linger, exactly 3.0–4.0 seconds (e.g. start=0.0, end=3.5).
-  - All other clips (B-roll, scenery, setup, transition walking): MUST be 2.0–3.0 seconds. NEVER exceed 3.0 seconds.
+  - High-energy/active footage (e.g. sports, rapid movement): MUST be fast and dynamic, exactly 2.0–4.0 seconds (e.g. start=10.0, end=13.5).
+  - Slower atmospheric/cinematic beauty shots (e.g. temples, landscapes, reflection): Let them linger, exactly 5.0–8.0 seconds (e.g. start=0.0, end=7.5).
+  - All other clips (B-roll, scenery, setup, transition walking): MUST be 3.0–5.0 seconds. NEVER exceed 8.0 seconds.
 - location_tag: snake_case label for the physical spot/subject (e.g. pool, table_tennis, garden, archway, city, temple_candles). Use the same tag for clips showing the same location/setting.
 - journey_phase: approach|arrival|exterior|interior|detail|climax
 - time_of_day: infer from lighting, sky color, shadows, and artificial light presence. dawn = soft pink/purple sky. morning = bright soft light, long shadows. afternoon = harsh overhead light. golden_hour = warm orange light, low sun. dusk = sky transitioning dark. night = dark sky, artificial lights dominant. If indoors with no sky visible, infer from light color temperature (warm tungsten = likely night, cool daylight = likely day).
@@ -486,11 +486,12 @@ STEP 2 — BUILD THE ORDER BASED ON THE DIRECTIVES
 You have full freedom to reorder the clips to best satisfy the USER EDITING DIRECTIVES above.
 Prioritize the chronological flow, subject focus, or progression requested by the user.
 
-- REORGANIZE THE "ACTS" (Logical Flow): Stop jumping between locations. Group your clips into three natural Acts to build a professional story flow:
-  - Act I: The Arrival (Setting the Scene): Start with the archway/garden (establishing shots), then transition to city/architecture.
-  - Act II: The Experience (High Energy): Transition to boat/water shots, followed by pool action (keep all wet/active/sports footage grouped in this block).
-  - Act III: The Reflection (Slow Down): End with temple/candles (the low light/candles make for a perfect emotional closing).
-- LOCATION GROUPING: Within each Act, you MUST group clips from the same physical location/scene together as a contiguous block. Do NOT jump back and forth between locations (e.g., pool -> city -> pool).
+- DEFINE A NARRATIVE TEMPLATE: Analyze the available clips (whether they are from a trip, party, vlog, or event) and choose an overarching narrative template (e.g., "Arrival to Departure", "Day to Night", "Setup to Peak Action to Aftermath").
+- REORGANIZE THE "ACTS" (Logical Flow): Stop jumping between locations. Group your clips into three natural Acts to build a professional story flow based on your template:
+  - Act I: Setup / The Beginning (Establishing the scene, hook, arrival).
+  - Act II: The Core Experience / Peak (The main event, highest energy, primary activities).
+  - Act III: Conclusion / Reflection (The winding down, aftermath, or satisfying closure).
+- STRICT LOCATION GROUPING: Within and across the Acts, you MUST group clips from the same physical location/scene together as a contiguous block. Once you show a location, play all clips from that location before moving on. Do NOT jump back and forth between locations (e.g., location A -> location B -> location A is strictly forbidden).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 3 — CHOOSE FLUID AND EMOTIONAL TRANSITIONS
@@ -514,6 +515,7 @@ No code fences.
 
 {{
   "removed_clips": [],
+  "narrative_template": "State the overarching template you chose (e.g., 'Arrival to Departure', 'Day to Night', etc.)",
   "full_story": "2-3 sentence cinematic description of the emotional progression of the reel",
   "order": [4, 1, 0, 6, 2, 7, 5, 8], // MUST contain ALL survived clip indices.
   "roles": ["hook", "build", "build", "build", "build", "build", "build", "payoff"],
@@ -531,7 +533,7 @@ CRITICAL RULES:
 - removed_clips MUST NOT appear in order
 - You MUST include ALL clips in 'order' that you did not explicitly remove in 'removed_clips'. Do NOT drop clips silently.
 - CLIP COUNT CHECK: There are {len(segments)} clips (indices 0 to {len(segments)-1}). Your 'order' array MUST contain exactly {len(segments)} minus len(removed_clips) indices.
-- LOCATION GROUPING: Unless explicitly requested by the user's directives, you MUST group clips from the same physical location/scene together contiguously. Do NOT alternate or interleave locations.
+- STRICT LOCATION GROUPING: Unless explicitly requested by the user's directives, you MUST group clips from the same physical location/scene together contiguously. Do NOT alternate or interleave locations. Once a location is shown, all clips from that location must finish playing before moving to the next.
 - CRITICAL: YOU MUST STRICTLY FOLLOW THESE USER EDITING DIRECTIVES:
 {directives}
 
@@ -603,14 +605,15 @@ STEP 2 — BUILD THE EMOTIONAL ARC
 {temporal_note}
 
 Your job is ONLY to:
-1. REORGANIZE THE "ACTS" (Logical Flow): Stop jumping between locations. Group your clips into three natural Acts to build a professional story flow:
-   - Act I: The Arrival (Setting the Scene): Start with the archway/garden (establishing shots), then transition to city/architecture.
-   - Act II: The Experience (High Energy): Transition to boat/water shots, followed by pool action (keep all wet/active/sports footage grouped in this block).
-   - Act III: The Reflection (Slow Down): End with temple/candles (the low light/candles make for a perfect emotional closing).
-2. Decide the best HOOK (first clip) within Act I.
-3. Ensure no consecutive same-type clips (swap adjacent clips if needed).
-4. Choose the best PAYOFF (final clip) within Act III.
-5. LOCATION GROUPING: Within each Act, you MUST group clips from the same physical location/scene together as a contiguous block. Do NOT jump back and forth between locations (e.g. pool -> city -> pool).
+1. DEFINE A NARRATIVE TEMPLATE: Analyze the clips (whether they are from a trip, party, vlog, or event) and choose an overarching template (e.g., "Arrival to Departure", "Day to Night", "Calm to High Energy to Calm").
+2. REORGANIZE THE "ACTS" (Logical Flow): Group your clips into three natural Acts based on your template:
+   - Act I: Setup / The Beginning (Establishing the scene, hook, arrival).
+   - Act II: The Core Experience / Peak (The main event, highest energy, primary activities).
+   - Act III: Conclusion / Reflection (The winding down, aftermath, or satisfying closure).
+3. Decide the best HOOK (first clip) within Act I.
+4. Ensure no consecutive same-type clips (swap adjacent clips if needed).
+5. Choose the best PAYOFF (final clip) within Act III.
+6. STRICT LOCATION GROUPING: You MUST group clips from the same physical location/scene together as a contiguous block. Do NOT jump back and forth between locations (e.g. location A -> location B -> location A is strictly forbidden).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 HOOK RULES
@@ -727,6 +730,8 @@ No code fences.
       "reason": "visually repetitive and weaker than clip 7"
     }}
   ],
+
+  "narrative_template": "State the overarching template you chose (e.g., 'Arrival to Departure', 'Day to Night', etc.)",
 
   "full_story": "2-3 sentence cinematic description of the emotional progression of the reel",
 

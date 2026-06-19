@@ -9,10 +9,23 @@ logger = logging.getLogger(__name__)
 
 
 def get_video_duration(video_path: str) -> float:
-    """Uses ffprobe to extract video duration, with cv2 fallback."""
+    """Uses OpenCV to mathematically compute exact video frame duration, with ffprobe fallback."""
+    import cv2
+    cap = cv2.VideoCapture(str(video_path))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    cap.release()
+    
+    # If OpenCV successfully calculates a valid duration, use it.
+    # This guarantees exact frame alignment for xfade transitions.
+    if fps > 0 and frame_count > 0:
+        return float(frame_count) / float(fps)
+        
+    # Fallback to FFprobe metadata container duration
     cmd = [
         "ffprobe", "-v", "error",
-        "-show_entries", "format=duration",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=duration",
         "-of", "default=noprint_wrappers=1:nokey=1",
         str(video_path)
     ]
@@ -22,14 +35,7 @@ def get_video_duration(video_path: str) -> float:
             return float(res.stdout.strip())
         except ValueError:
             pass
-    # Fallback to OpenCV
-    import cv2
-    cap = cv2.VideoCapture(str(video_path))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-    cap.release()
-    if fps > 0 and frame_count > 0:
-        return frame_count / fps
+
     raise ValueError(f"Could not read video duration for: {video_path}")
 
 
@@ -354,6 +360,7 @@ def stitch_clips(
             "-c:a", "aac",
             "-ar", "44100",
             "-ac", "2",
+            "-t", str(total_duration),
             str(output_path)
         ])
 
