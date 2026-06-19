@@ -269,7 +269,7 @@ Clip types — pick ONE:
 Rules:
 - Prefer SETTLED/LINEAR_FORWARD frames. Avoid CHAOTIC/WHIP_PAN frames.
 - Reject: blurry-throughout, floor-only, empty walking-only shots.
-- Each segment: 1.0–4.0s. Approach/driving clips: max 3.0s.
+- Each segment MUST be at least 2.0s to 5.0s long. STRICT MINIMUM: 2.0 seconds. Never extract a clip shorter than 2.0s unless the whole video is shorter than 2.0s. Approach/driving clips: max 3.0s.
 - location_tag: snake_case label for the physical spot/subject (e.g. plane_interior, airport, car_interior, parking_lot, temple_entrance, temple_altar). Use the same tag for clips showing the same location/setting.
 - journey_phase: approach|arrival|exterior|interior|detail|climax
 - time_of_day: infer from lighting, sky color, shadows, and artificial light presence. dawn = soft pink/purple sky. morning = bright soft light, long shadows. afternoon = harsh overhead light. golden_hour = warm orange light, low sun. dusk = sky transitioning dark. night = dark sky, artificial lights dominant. If indoors with no sky visible, infer from light color temperature (warm tungsten = likely night, cool daylight = likely day).
@@ -339,7 +339,7 @@ Non-matching clips may only fill transitional/contextual roles.
     return ""
 
 
-def build_story_order_prompt(segments: list, all_results: list, directives: str = "", focus: dict = None) -> str:
+def build_story_order_prompt(segments: list, all_results: list, directives: str = "", focus: dict = None, vibe_hint: str = "", transition_style: str = "") -> str:
     # ─────────────────────────────────────────────────────────────
     # SOURCE VIDEO CONTEXT
     # ─────────────────────────────────────────────────────────────
@@ -437,8 +437,14 @@ Editor Read: {seg.get("editor_reasoning", "")[:220] or "N/A"}
     loc_grouping_note = "Once all clips for one location finish playing, you move to the next location. Never go back to a previously finished location."
     if directives:
         directives_note = f"\nUSER EDITING DIRECTIVES (YOU MUST FOLLOW THESE INSTRUCTIONS):\n{directives}\n"
-        directives_reminder = f"\n- CRITICAL: YOU MUST STRICTLY FOLLOW THESE USER EDITING DIRECTIVES:\n{directives}\n"
+        directives_reminder = f"\n- CRITICAL: YOU MUST STRICTLY FOLLOW THESE USER EDITING DIRECTIVES:\n{directives}\n- WHATEVER THE USER MENTIONS IN THE DIRECTIVES MUST BE IMPLEMENTED IN THE VIDEO."
         loc_grouping_note = "Once all clips for one location finish playing, you move to the next location. Never go back to a previously finished location, EXCEPT when doing so is necessary to satisfy the USER EDITING DIRECTIVES (for instance, if the user explicitly asks to start and end with a plane/flight, or return to a location)."
+
+    vibe_instructions = ""
+    if vibe_hint:
+        vibe_instructions = f"\nVIBE GUIDELINES:\n{vibe_hint}\n"
+    if transition_style:
+        vibe_instructions += f"Preferred transition style: {transition_style}. You MUST heavily favor this transition style between clips unless the pacing strictly requires a different cut.\n"
 
     focus_constraint = build_focus_constraint(focus)
 
@@ -448,6 +454,7 @@ You are an elite cinematic short-form video editor.
 
 USER EDITING DIRECTIVES (YOU MUST FOLLOW THESE INSTRUCTIONS):
 {directives}
+{vibe_instructions}
 {focus_constraint}
 
 CRITICAL INSTRUCTION FOR REASONING AND THINKING:
@@ -500,11 +507,18 @@ No code fences.
   "order": [4, 1, 0, 6, 2, 7, 5, 8], // MUST contain ALL survived clip indices.
   "roles": ["hook", "build", "build", "build", "build", "build", "build", "payoff"],
   "energy_flow": ["dramatic", "movement", "calm", "atmospheric", "steady", "curious", "intense", "epic"],
+  "transitions": [
+    {{"from_index": 4, "to_index": 1, "type": "hard_cut", "duration": 0.0}},
+    {{"from_index": 1, "to_index": 0, "type": "smooth_dissolve", "duration": 0.5}}
+  ],
   "reasoning": "Explain how the sequence satisfies the USER EDITING DIRECTIVES."
 }}
 
 CRITICAL RULES:
 - order and roles MUST be same length
+- TRANSITION COUNT: The transitions array MUST have EXACTLY (len(order) - 1) items describing the transition between each clip. If your order array has N items, the transitions array MUST have N-1 items. Do NOT drop transitions.
+- TRANSITION MENU: The `type` in the transitions array MUST be strictly chosen from this exact list: `hard_cut`, `fade`, `wipeleft`, `wiperight`, `slideleft`, `slideright`, `circlecrop`, `rectcrop`, `distance`, `dissolve`, `pixelize`, `radial`, `hblur`, `zoomin`, `fadeblack`. DO NOT invent transition names like `match_cut`.
+- ACT LIKE A HUMAN EDITOR: Unless the USER EDITING DIRECTIVES explicitly request a specific transition style, roughly 50% of your transitions MUST be a 'hard_cut' (duration 0.0), and the other 50% MUST be dynamic transitions (like zoomin, wipeleft, fade). Use dynamic transitions to emphasize scene changes, beat drops, or major energy shifts. Set dynamic transition duration to 0.5.
 - no duplicate clips in order
 - removed_clips MUST NOT appear in order
 - You MUST include ALL clips in 'order' that you did not explicitly remove in 'removed_clips'. Do NOT drop clips silently.
@@ -519,22 +533,19 @@ CRITICAL REASONING CONSTRAINT: Your thinking block (<think>...</think>) MUST be 
     return f"""
 You are an elite cinematic short-form video editor.
 {directives_note}
+{vibe_instructions}
 CRITICAL INSTRUCTION FOR REASONING AND THINKING:
 Keep your internal thinking process (the reasoning path before outputting JSON) extremely short, concise, and direct (maximum 3-4 sentences total). Do not write long explanations, nested logic, or repetitive drafts. Summarize your thoughts immediately and output the final JSON object.
 
 You are editing a premium Instagram/TikTok travel reel from raw trip footage.
 
-Your goal is NOT to document the trip accurately.
-
-Your goal is to create the MOST emotionally engaging reel possible.
+Your goal is to build a cohesive, connected story.
 
 Think like a real editor:
 - viewer retention first
-- emotional pacing first
-- cinematic rhythm first
-- visual contrast first
-
-NOT strict chronology.
+- logical story connections first
+- chronological sequencing where it makes sense
+- clear and cohesive journey
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EDITOR MINDSET
@@ -548,11 +559,11 @@ A great reel feels:
 - immersive
 
 The reel should feel like:
-curiosity → movement → atmosphere → wonder → payoff
+start of journey → building the experience → main highlight → satisfying conclusion
 
-You are NOT organizing clips.
+You are organizing clips to tell a coherent story.
 
-You are crafting emotion.
+You are crafting a clear, logical sequence.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SOURCE VIDEOS
@@ -731,18 +742,26 @@ No code fences.
     "epic"
   ],
 
+  "transitions": [
+    {{"from_index": 4, "to_index": 1, "type": "hard_cut", "duration": 0.0}},
+    {{"from_index": 1, "to_index": 0, "type": "smooth_dissolve", "duration": 0.5}}
+  ],
+
   "reasoning": "Explain why the hook works, why transitions feel emotionally effective, how contrast was used, why clips were removed, and why the ending feels satisfying."
 }}
 
 CRITICAL RULES:
 - order and roles MUST be same length
+- TRANSITION COUNT: The transitions array MUST have EXACTLY (len(order) - 1) items describing the transition between each clip. If your order array has N items, the transitions array MUST have N-1 items. Do NOT drop transitions.
+- TRANSITION MENU: The `type` in the transitions array MUST be strictly chosen from this exact list: `hard_cut`, `fade`, `wipeleft`, `wiperight`, `slideleft`, `slideright`, `circlecrop`, `rectcrop`, `distance`, `dissolve`, `pixelize`, `radial`, `hblur`, `zoomin`, `fadeblack`. DO NOT invent transition names like `match_cut`.
+- ACT LIKE A HUMAN EDITOR: Unless the USER EDITING DIRECTIVES explicitly request a specific transition style, roughly 50% of your transitions MUST be a 'hard_cut' (duration 0.0), and the other 50% MUST be dynamic transitions (like zoomin, wipeleft, fade). Use dynamic transitions to emphasize scene changes, beat drops, or major energy shifts. Set dynamic transition duration to 0.5.
 - no duplicate clips in order
 - removed_clips MUST NOT appear in order
 - You MUST include ALL clips in 'order' that you did not explicitly remove in 'removed_clips'. Do NOT drop clips silently.
 - CLIP COUNT CHECK: There are {len(segments)} clips (indices 0 to {len(segments)-1}). Your 'order' array MUST contain exactly {len(segments)} minus len(removed_clips) indices. If you have 12 clips and removed 0, 'order' MUST have 12 entries.
-- prioritize emotion over chronology
-- prioritize pacing over documentation
-- prioritize cinematic storytelling over logical sequencing
+- prioritize logical story connections (connecting the dots) so the video makes sense from beginning to end
+- prioritize a cohesive chronological journey over pure emotional pacing
+- prioritize clear, logical sequencing while still keeping it engaging
 {directives_reminder}
 {focus_constraint}
 CRITICAL REASONING CONSTRAINT: Your thinking block (<think>...</think>) MUST be under 100 tokens. Summarize in 3 sentences max, then immediately output the JSON.

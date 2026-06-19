@@ -39,6 +39,7 @@ VIBE_MAP: dict[str, dict] = {
     VibePreset.ENERGETIC: {
         "transitions":    "hard_cut",
         "music_genre":    "upbeat_edm_hiphop",
+        "clip_pace":      "0.5-2.0",
         "ai_prompt_hint": (
             "Prioritize fast-paced, high-energy clips with motion, action, and excitement. "
             "Favor short, punchy segments. Avoid slow, static, or overly serene shots."
@@ -47,6 +48,7 @@ VIBE_MAP: dict[str, dict] = {
     VibePreset.ROMANTIC: {
         "transitions":    "smooth_dissolve",
         "music_genre":    "acoustic_soft_piano",
+        "clip_pace":      "2.0-4.0",
         "ai_prompt_hint": (
             "Prioritize intimate, warm, and soft moments. Favor golden-hour shots, "
             "close-ups of people, gentle interactions, and serene landscapes. "
@@ -56,6 +58,7 @@ VIBE_MAP: dict[str, dict] = {
     VibePreset.SPIRITUAL: {
         "transitions":    "slow_fade",
         "music_genre":    "ambient_devotional",
+        "clip_pace":      "3.0-5.0",
         "ai_prompt_hint": (
             "Prioritize peaceful, contemplative, and serene clips. Favor wide shots of nature, "
             "quiet moments, spiritual or ceremonial scenes, and slow deliberate movement. "
@@ -65,6 +68,7 @@ VIBE_MAP: dict[str, dict] = {
     VibePreset.CINEMATIC: {
         "transitions":    "match_cut",
         "music_genre":    "orchestral_dramatic",
+        "clip_pace":      "1.5-3.5",
         "ai_prompt_hint": (
             "Prioritize visually striking and narratively rich clips. Favor establishing shots, "
             "dramatic reveals, and clips with strong compositional framing. "
@@ -74,6 +78,7 @@ VIBE_MAP: dict[str, dict] = {
     VibePreset.NOSTALGIC: {
         "transitions":    "film_grain_fade",
         "music_genre":    "lofi_retro",
+        "clip_pace":      "1.5-3.0",
         "ai_prompt_hint": (
             "Prioritize clips that evoke warmth, memory, and sentimentality. Favor candid moments, "
             "group interactions, milestone events, and everyday beauty. "
@@ -83,6 +88,7 @@ VIBE_MAP: dict[str, dict] = {
     VibePreset.ADVENTUROUS: {
         "transitions":    "jump_cut_motion_blur",
         "music_genre":    "upbeat_rock_folk",
+        "clip_pace":      "1.0-2.5",
         "ai_prompt_hint": (
             "Prioritize clips with movement, exploration, and discovery. Favor outdoor action shots, "
             "travel moments, physical activity, and wide scenic vistas. "

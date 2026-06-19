@@ -8,6 +8,8 @@ Runs all videos in parallel via ThreadPoolExecutor.
 """
 
 import cv2
+cv2.ocl.setUseOpenCL(False)
+cv2.setNumThreads(0)
 import numpy as np
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor

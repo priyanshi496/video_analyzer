@@ -7,6 +7,8 @@ already-extracted frames (zero extra I/O cost).
 """
 
 import cv2
+cv2.ocl.setUseOpenCL(False)
+cv2.setNumThreads(0)
 import numpy as np
 from pathlib import Path
 

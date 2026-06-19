@@ -25,6 +25,7 @@ from app.services.prompts_service import (
     parse_json_response,
     clamp_segments,
 )
+from app.core.vibe_config import VibePreset, get_vibe_config
 from app.services.logger_service import (
     init_run_log_dir,
     log_vision_call,
@@ -287,7 +288,7 @@ CRITICAL RULES:
     fallbacks = [CONFIG.get("story_order_fallback", "openai/gpt-oss-120b:free")]
     try:
         logging.info("  🔧 Triggering LLM schema repair for malformed response...")
-        return call_openrouter_text(prompt, api_key, model=text_model, fallbacks=fallbacks)
+        return call_openrouter_text(prompt, model=text_model, fallbacks=fallbacks)
     except Exception as e:
         logging.warning(f"  ✗ Text-repair call failed: {e}")
         raise e
@@ -658,16 +659,16 @@ def merge_adjacent(segs: list, gap: float = 0.5, max_duration: float = 4.0) -> l
     """
     if not segs:
         return segs
-    segs   = sorted(segs, key=lambda s: s["start_sec"])
+    segs   = sorted(segs, key=lambda s: s.get("start_sec", 0))
     merged = [segs[0].copy()]
     for seg in segs[1:]:
-        new_end  = max(merged[-1]["end_sec"], seg["end_sec"])
-        new_dur  = new_end - merged[-1]["start_sec"]
-        gap_dist = seg["start_sec"] - merged[-1]["end_sec"]
+        new_end  = max(merged[-1].get("end_sec", 0), seg.get("end_sec", 0))
+        new_dur  = new_end - merged[-1].get("start_sec", 0)
+        gap_dist = seg.get("start_sec", 0) - merged[-1].get("end_sec", 0)
         if gap_dist <= gap and new_dur <= max_duration:
             merged[-1]["end_sec"]  = new_end
-            merged[-1]["reason"]  += " + " + seg["reason"]
-            merged[-1]["priority"] = min(merged[-1]["priority"], seg.get("priority", 999))
+            merged[-1]["reason"]  = merged[-1].get("reason", "") + " + " + seg.get("reason", "")
+            merged[-1]["priority"] = min(merged[-1].get("priority", 999), seg.get("priority", 999))
         else:
             merged.append(seg.copy())
     return merged
@@ -866,6 +867,7 @@ def run_full_analysis(
     directives: str = "",
     use_uploaded_order: bool = False,
     progress_callback = None,
+    vibe: str = "cinematic",
 ) -> list:
     """
     Run process_single_video for all videos in parallel, then build final
@@ -1134,10 +1136,20 @@ def run_full_analysis(
     story_order = list(range(len(survived)))
     story_roles = ["clip"] * len(survived)
     story_reasoning = ""
+    story_transitions = []
 
     if len(survived) >= 2 and not use_uploaded_order:
-        logging.info("\nRequesting story order from model...")
-        story_prompt = build_story_order_prompt(survived, all_results, directives, focus)
+        try:
+            vibe_enum = VibePreset(vibe)
+        except ValueError:
+            vibe_enum = VibePreset.CINEMATIC
+            
+        vibe_config = get_vibe_config(vibe_enum)
+        vibe_hint = vibe_config.get("ai_prompt_hint", "")
+        transition_style = vibe_config.get("transitions", "")
+
+        logging.info(f"\nRequesting story order from model with vibe: {vibe_enum.value}...")
+        story_prompt = build_story_order_prompt(survived, all_results, directives, focus, vibe_hint, transition_style)
         t0 = time.time()
         raw_order = None
         story_model = CONFIG.get("story_order_model", CONFIG["model"])
@@ -1159,6 +1171,8 @@ def run_full_analysis(
             )
             order = parsed_order.get("order", [])
             roles = parsed_order.get("roles", [])
+            transitions = parsed_order.get("transitions", [])
+            story_transitions = transitions
 
             # ── Lenient validation: accept valid subset, append missing indices ──
             n = len(survived)
@@ -1251,6 +1265,13 @@ def run_full_analysis(
     # ordered_survived = enforce_no_consecutive_same_source(ordered_survived)
     for position, seg in enumerate(ordered_survived):
         seg["story_position"] = position
+        if story_transitions and position < len(story_transitions):
+            # transitions[i] describes the cut AFTER ordered_survived[i]
+            seg["transition_out"] = story_transitions[position].get("type", "hard_cut")
+            seg["transition_duration"] = story_transitions[position].get("duration", 0.0)
+        else:
+            seg["transition_out"] = None
+            seg["transition_duration"] = 0.0
 
     # ── Append unused/duplicate clips at the end ─────────────────────────────
     # This includes clips rejected by hard deduplication AND clips rejected by the Story LLM
@@ -1467,6 +1488,11 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                         await db.commit()
                 
                 loop.run_until_complete(_save_results(final_segs))
+                
+                update_progress(95)
+                from app.services.composition_service import compose_video_project
+                loop.run_until_complete(compose_video_project(str(job_uuid), TaskSessionLocal))
+                
                 update_progress(100, JobStatus.COMPLETED)
                 
             except Exception as e:

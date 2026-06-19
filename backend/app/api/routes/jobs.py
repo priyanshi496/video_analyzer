@@ -27,6 +27,7 @@ class JobStatusResponse(BaseModel):
     status: JobStatus
     progress: int
     error_message: Optional[str] = None
+    final_video_url: Optional[str] = None
     created_at: str
 
 class AnalyzedClipResponse(BaseModel):
@@ -93,6 +94,7 @@ async def start_analysis_job(
             status=job.status,
             progress=job.progress,
             error_message=job.error_message,
+            final_video_url=None,
             created_at=str(job.created_at)
         )
     except HTTPException:
@@ -118,12 +120,17 @@ async def get_job_status(
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
+        final_video_url = None
+        if getattr(job, "final_video_key", None):
+            final_video_url = storage_service.generate_presigned_url(job.final_video_key)
+
         return JobStatusResponse(
             id=str(job.id),
             project_id=str(job.project_id),
             status=job.status,
             progress=job.progress,
             error_message=job.error_message,
+            final_video_url=final_video_url,
             created_at=str(job.created_at)
         )
     except HTTPException:
