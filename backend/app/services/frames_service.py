@@ -42,7 +42,14 @@ def extract_representative_frames(
         frame_index, timestamp_sec, abs_timestamp, path,
         mean_brightness  ← used by the UI to flag near-black clips
     """
-    FRAMES_DIR.mkdir(exist_ok=True, parents=True)
+    from app.services.logger_service import _get_run_id
+    run_id = _get_run_id()
+    if run_id and run_id != "unknown_job":
+        run_frames_dir = FRAMES_DIR / run_id
+    else:
+        run_frames_dir = FRAMES_DIR
+    run_frames_dir.mkdir(exist_ok=True, parents=True)
+
     is_image = Path(video_path).suffix.lower() in (".jpg", ".jpeg", ".png", ".heic")
     if is_image:
         frame = cv2.imread(video_path)
@@ -57,7 +64,7 @@ def extract_representative_frames(
             frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
         mean_brightness = float(np.mean(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)))
-        out_path = FRAMES_DIR / f"{stem}_t00_0.00.jpg"
+        out_path = run_frames_dir / f"{stem}_t00_0.00.jpg"
         success = cv2.imwrite(str(out_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
         if not success:
             logging.error(f"  ✗ Failed to write static image frame to {out_path}!")
@@ -102,7 +109,7 @@ def extract_representative_frames(
         # Compute mean brightness (used for black-frame warning in UI)
         mean_brightness = float(np.mean(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)))
 
-        out_path = FRAMES_DIR / f"{stem}_t{i:02d}_{ts_in_window:.2f}.jpg"
+        out_path = run_frames_dir / f"{stem}_t{i:02d}_{ts_in_window:.2f}.jpg"
         success = cv2.imwrite(str(out_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
         if not success:
             logging.error(f"  ✗ Failed to write video frame to {out_path}!")

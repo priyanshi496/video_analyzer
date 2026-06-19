@@ -38,7 +38,7 @@ CONFIG = {
         "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
         "google/gemma-4-31b-it:free",
     ],
-    "max_tokens_vision": 2048,
+    "max_tokens_vision": 4096,
     "max_tokens_text":   1000,
     "story_order_model":    "openai/gpt-oss-120b:free",
     "story_order_fallback": "meta-llama/llama-3-8b-instruct:free",
@@ -286,8 +286,8 @@ CRITICAL RULES:
     text_model = CONFIG.get("story_order_model", "openrouter/owl-alpha")
     fallbacks = [CONFIG.get("story_order_fallback", "openai/gpt-oss-120b:free")]
     try:
-        logging.info("  🔧 Triggering LLM schema repair for malformed response...")
-        return call_openrouter_text(prompt, api_key, model=text_model, fallbacks=fallbacks)
+        logging.info("  [Repair] Triggering LLM schema repair for malformed response...")
+        return call_openrouter_text(prompt, model=text_model, fallbacks=fallbacks)
     except Exception as e:
         logging.warning(f"  ✗ Text-repair call failed: {e}")
         raise e
@@ -303,6 +303,7 @@ def analyze_window(
     video_quality_map: dict,
     chunk_label: str = "",
     reference_paths: list = None,
+    directives: str = "",
 ) -> tuple:
     """
     Analyze one time window. Returns (frame_meta, parsed_dict) — never None.
@@ -328,7 +329,7 @@ def analyze_window(
     payload_images = [f["path"] for f in frame_meta] + reference_paths[:ref_slots]
     window_info    = dict(info, duration_sec=window_sec)
     ref_sent       = reference_paths[:ref_slots]
-    prompt         = build_timeline_prompt(window_info, frame_meta, ref_sent, video_quality_map)
+    prompt         = build_timeline_prompt(window_info, frame_meta, ref_sent, video_quality_map, directives)
 
     parsed = None
     raw = None
@@ -598,26 +599,64 @@ def auto_recover_segments(parsed: dict) -> dict:
     # User can still manually rotate clips using the editor UI.
     rotation = 0
 
-    if not parsed.get("best_segments") and parsed.get("segments"):
-        fallback_segs = []
-        keep_segs = [s for s in parsed["segments"] if s.get("keep") is True]
-        source_segs = keep_segs if keep_segs else parsed["segments"]
-        import uuid
-        for s in source_segs:
-            unique_loc = s.get("location_tag") or f"unknown_{uuid.uuid4().hex[:6]}"
-            fallback_segs.append({
-                "start_sec": s.get("start_sec", 0.0),
-                "end_sec": s.get("end_sec", 0.0),
-                "reason": s.get("reason") or s.get("what_happens") or "Auto-recovered highlight segment",
-                "priority": s.get("priority") or 1,
-                "narrative_role": s.get("narrative_role") or s.get("role") or "unknown",
-                "clip_type_applied": s.get("clip_type_applied") or "Auto-recovered segment fallback",
-                "location_tag": unique_loc,
-                "journey_phase": s.get("journey_phase") or "unknown"
+    if not isinstance(parsed, dict):
+        parsed = {}
+
+    best_segs = parsed.get("best_segments")
+    if not isinstance(best_segs, list):
+        best_segs = []
+
+    # If best_segments is empty, try to recover from other potential list fields
+    if not best_segs:
+        # Check 'segments'
+        if parsed.get("segments") and isinstance(parsed["segments"], list):
+            keep_segs = [s for s in parsed["segments"] if s.get("keep") is True]
+            source_segs = keep_segs if keep_segs else parsed["segments"]
+            import uuid
+            for s in source_segs:
+                unique_loc = s.get("location_tag") or f"unknown_{uuid.uuid4().hex[:6]}"
+                best_segs.append({
+                    "start_sec": s.get("start_sec", 0.0),
+                    "end_sec": s.get("end_sec", 3.0),
+                    "reason": s.get("reason") or s.get("what_happens") or "Auto-recovered highlight segment",
+                    "priority": s.get("priority") or 1,
+                    "narrative_role": s.get("narrative_role") or s.get("role") or "unknown",
+                    "clip_type_applied": s.get("clip_type_applied") or "Auto-recovered segment fallback",
+                    "location_tag": unique_loc,
+                    "journey_phase": s.get("journey_phase") or "unknown"
+                })
+        
+        # Check 'key_moments' / 'moments'
+        elif parsed.get("key_moments") and isinstance(parsed["key_moments"], list):
+            import uuid
+            for km in parsed["key_moments"]:
+                ts = km.get("timestamp_sec", 0.0)
+                best_segs.append({
+                    "start_sec": ts,
+                    "end_sec": ts + 3.0,
+                    "reason": km.get("description") or "Auto-recovered from key moment",
+                    "priority": 2,
+                    "narrative_role": "action",
+                    "clip_type_applied": "Key moment fallback",
+                    "location_tag": f"unknown_{uuid.uuid4().hex[:6]}",
+                    "journey_phase": "unknown"
+                })
+
+        # Absolute fallback: if still empty, create one default segment covering 0.0 to 3.0s
+        if not best_segs:
+            best_segs.append({
+                "start_sec": 0.0,
+                "end_sec": 3.0,
+                "reason": "Fallback: Default segment auto-created due to empty model output.",
+                "priority": 3,
+                "narrative_role": "unknown",
+                "clip_type_applied": "Default fallback",
+                "location_tag": "unknown_fallback",
+                "journey_phase": "unknown"
             })
-        parsed["best_segments"] = fallback_segs
-    
-    for seg in parsed.get("best_segments", []):
+
+    parsed["best_segments"] = best_segs
+    for seg in parsed["best_segments"]:
         seg["camera_rotation"] = rotation
     return parsed
 
@@ -732,12 +771,15 @@ def process_single_video(
     api_key: str,
     video_quality_map: dict,
     reference_paths: list,
+    directives: str = "",
 ) -> dict:
     # Check cache first thread-safely
     with CACHE_LOCK:
         cache = load_cache()
     
-    cache_key = f"{info['path']}_{info['duration_sec']}"
+    # Incorporate normalized directives into cache key to avoid cache collisions
+    norm_directives = " ".join(directives.lower().split()) if directives else ""
+    cache_key = f"{info['path']}_{info['duration_sec']}_{norm_directives}"
     if cache_key in cache:
         cached_val = cache[cache_key]
         # Validate if frame images actually exist on disk
@@ -797,7 +839,7 @@ def process_single_video(
 
     if dur <= chunk_window:
         fm, parsed     = analyze_window(info, 0.0, dur, api_key, video_quality_map,
-                                        reference_paths=reference_paths)
+                                        reference_paths=reference_paths, directives=directives)
         parsed         = auto_recover_segments(parsed)
         all_frame_meta = fm
         chunk_analyses = [parsed]
@@ -816,7 +858,7 @@ def process_single_video(
             label = f"chunk{ci:02d}"
             logging.info(f"   Chunk {ci+1}/{len(starts)}: [{start:.1f}s–{start+window:.1f}s]")
             fm, parsed = analyze_window(info, start, window, api_key, video_quality_map,
-                                        chunk_label=label, reference_paths=reference_paths)
+                                        chunk_label=label, reference_paths=reference_paths, directives=directives)
             parsed = auto_recover_segments(parsed)
             parsed = offset_segments(parsed, start)
             all_frame_meta += fm
@@ -880,7 +922,7 @@ def run_full_analysis(
     max_workers = min(len(video_infos) or 1, CONFIG.get("max_parallel_vision_calls", 3))
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures = [
-            ex.submit(process_single_video, info, api_key, video_quality_map, reference_paths)
+            ex.submit(process_single_video, info, api_key, video_quality_map, reference_paths, directives)
             for info in video_infos
         ]
         import concurrent.futures
@@ -1134,6 +1176,8 @@ def run_full_analysis(
     story_order = list(range(len(survived)))
     story_roles = ["clip"] * len(survived)
     story_reasoning = ""
+    story_transitions = []
+    story_transition_durations = []
 
     if len(survived) >= 2 and not use_uploaded_order:
         logging.info("\nRequesting story order from model...")
@@ -1159,6 +1203,8 @@ def run_full_analysis(
             )
             order = parsed_order.get("order", [])
             roles = parsed_order.get("roles", [])
+            llm_transitions = parsed_order.get("transitions", [])
+            llm_durations = parsed_order.get("transition_durations", [])
 
             # ── Lenient validation: accept valid subset, append missing indices ──
             n = len(survived)
@@ -1186,9 +1232,13 @@ def run_full_analysis(
                 story_order = clean_order
                 story_roles = clean_roles
                 story_reasoning = parsed_order.get('reasoning', '')
+                story_transitions = llm_transitions
+                story_transition_durations = llm_durations
                 logging.info(f"Story order: {story_order}")
                 logging.info(f"Roles:       {story_roles}")
                 logging.info(f"Reasoning:   {story_reasoning}")
+                if story_transitions:
+                    logging.info(f"LLM Transitions: {story_transitions}")
             else:
                 logging.info(f"Story order: LLM returned no usable indices — keeping original.")
         except Exception as e:
@@ -1211,6 +1261,40 @@ def run_full_analysis(
         seg["is_used"]        = True
         seg["story_position"] = position
         
+        # Adjust segment timings for professional pacing and visual storytelling
+        loc_lower = str(seg.get("location_tag", "")).lower()
+        desc_lower = str(seg.get("what_happens", "")).lower()
+        subjs_lower = " ".join([str(s).lower() for s in seg.get("primary_subjects", [])])
+        combined_text = f"{loc_lower} {desc_lower} {subjs_lower}"
+
+        start = float(seg["start_sec"])
+        end = float(seg["end_sec"])
+        duration = end - start
+        video_dur = float(seg.get("video_duration_sec", 999.0))
+
+        # Check if the segment is high-energy action
+        is_action = any(kw in combined_text for kw in ["pool", "swim", "water", "action", "ping", "pong", "tennis", "play", "jump", "active", "splash", "game"])
+        # Check if it is a slow/atmospheric beauty shot (temple, candles, sunset, reflection)
+        is_slow = any(kw in combined_text for kw in ["sunset", "candle", "temple", "serene", "calm", "reflection", "slow", "beauty", "scenery", "night"])
+
+        if is_action:
+            # High-energy active footage: fast, dynamic, exactly 1.5 - 2.0s
+            target_dur = min(2.0, max(1.5, duration))
+            target_end = min(video_dur, start + target_dur)
+            seg["end_sec"] = round(target_end, 2)
+        elif is_slow:
+            # Slower atmospheric beauty shots: let it linger for 3.0 - 4.0s (up to max available)
+            target_dur = max(3.0, min(4.0, duration))
+            target_end = min(video_dur, start + target_dur)
+            seg["end_sec"] = round(target_end, 2)
+        else:
+            # Standard clips: capped at 3.0 seconds
+            if duration > 3.0:
+                seg["end_sec"] = round(start + 3.0, 2)
+
+        if seg["end_sec"] <= seg["start_sec"] + 0.1:
+            seg["end_sec"] = round(seg["start_sec"] + 0.1, 2)
+        
         # Enforce logical roles based on position: hook at index 0, payoff at the end
         role = story_roles[position] if position < len(story_roles) else "build"
         if position == 0:
@@ -1223,6 +1307,17 @@ def run_full_analysis(
         seg["story_role"]     = role
         if position == 0 and story_reasoning:
             seg["global_story_reasoning"] = story_reasoning
+
+        # Attach transition metadata if present and within range
+        if position < len(story_order) - 1:
+            if story_transitions and position < len(story_transitions):
+                seg["next_transition"] = story_transitions[position]
+            if story_transition_durations and position < len(story_transition_durations):
+                try:
+                    seg["next_transition_duration"] = float(story_transition_durations[position])
+                except (ValueError, TypeError):
+                    pass
+            
         ordered_survived.append(seg)
         actually_used_keys.add((seg["video_path"], seg["start_sec"], seg["end_sec"]))
 
@@ -1380,7 +1475,7 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
     try:
         update_progress(5, JobStatus.RUNNING)
         from app.services.logger_service import init_run_log_dir
-        init_run_log_dir(job_id)
+        init_run_log_dir(project_id, job_id)
         logging.info(f"  🎬 [Pipeline] Starting analysis | vibe={vibe!r} | directives={directives!r}")
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1467,6 +1562,25 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                         await db.commit()
                 
                 loop.run_until_complete(_save_results(final_segs))
+                
+                # Stitch the segments into a final video summary and upload to MinIO
+                logging.info("  🎬 [Pipeline] Generating final stitched video summary...")
+                clips_dir = Path(tmpdir) / "clips"
+                reel_path = Path(tmpdir) / "final_video.mp4"
+                
+                from app.services.stitch_service import build_reel_from_segments
+                
+                build_reel_from_segments(final_segs, clips_dir, reel_path)
+                
+                if reel_path.exists():
+                    logging.info("  📤 [Pipeline] Uploading final video to MinIO...")
+                    object_key = f"projects/{project_id}/jobs/{job_id}/final_video.mp4"
+                    with open(reel_path, "rb") as video_file:
+                        storage_service.upload_file_obj(video_file, object_key, content_type="video/mp4")
+                    logging.info(f"  ✅ [Pipeline] Final video uploaded to MinIO: {object_key}")
+                else:
+                    raise FileNotFoundError("Final video file was not created by stitcher.")
+                
                 update_progress(100, JobStatus.COMPLETED)
                 
             except Exception as e:
