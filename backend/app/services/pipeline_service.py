@@ -31,6 +31,8 @@ from app.services.logger_service import (
     log_story_order_call,
     write_run_summary,
 )
+from app.services.stitch_service import get_video_dimensions, get_video_rotation_metadata
+
 
 CONFIG = {
     "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
@@ -595,9 +597,12 @@ def apply_focus_filter(clips: list, focus: dict, total_slots: int) -> list:
 
 def auto_recover_segments(parsed: dict) -> dict:
     """Robust fallback: if best_segments is empty/missing but segments is populated, auto-recover them."""
-    # Force camera_rotation to always be 0 to prevent AI hallucinated rotations.
-    # User can still manually rotate clips using the editor UI.
-    rotation = 0
+    # Try to get the rotation from the AI, fallback to 0
+    rotation = parsed.get("camera_rotation", 0)
+    try:
+        rotation = int(rotation)
+    except (ValueError, TypeError):
+        rotation = 0
 
     if not isinstance(parsed, dict):
         parsed = {}
@@ -697,7 +702,21 @@ def merge_adjacent(segs: list, gap: float = 0.5, max_duration: float = 4.0) -> l
     """
     if not segs:
         return segs
-    segs   = sorted(segs, key=lambda s: s["start_sec"])
+        
+    valid_segs = []
+    for s in segs:
+        if isinstance(s, dict) and "start_sec" in s and "end_sec" in s:
+            try:
+                s["start_sec"] = float(s["start_sec"])
+                s["end_sec"] = float(s["end_sec"])
+                valid_segs.append(s)
+            except (ValueError, TypeError):
+                pass
+                
+    if not valid_segs:
+        return []
+        
+    segs = sorted(valid_segs, key=lambda s: s["start_sec"])
     merged = [segs[0].copy()]
     for seg in segs[1:]:
         new_end  = max(merged[-1]["end_sec"], seg["end_sec"])
@@ -705,11 +724,52 @@ def merge_adjacent(segs: list, gap: float = 0.5, max_duration: float = 4.0) -> l
         gap_dist = seg["start_sec"] - merged[-1]["end_sec"]
         if gap_dist <= gap and new_dur <= max_duration:
             merged[-1]["end_sec"]  = new_end
-            merged[-1]["reason"]  += " + " + seg["reason"]
-            merged[-1]["priority"] = min(merged[-1]["priority"], seg.get("priority", 999))
+            merged[-1]["reason"]  = merged[-1].get("reason", "") + " + " + seg.get("reason", "")
+            merged[-1]["priority"] = min(merged[-1].get("priority", 999), seg.get("priority", 999))
         else:
             merged.append(seg.copy())
     return merged
+
+
+def expand_segments(segments: list, min_duration: float = 2.5, video_duration: float = 0.0) -> list:
+    """
+    Expands the duration of segments to ensure they meet a minimum duration.
+    Attempts to expand symmetrically (half before, half after).
+    Clamps to the video boundaries.
+    """
+    for seg in segments:
+        try:
+            start = float(seg.get("start_sec", 0.0))
+            end = float(seg.get("end_sec", 0.0))
+            dur = end - start
+            
+            if dur < min_duration:
+                deficit = min_duration - dur
+                half = deficit / 2.0
+                
+                new_start = start - half
+                new_end = end + half
+                
+                # Shift if we hit boundaries
+                if new_start < 0.0:
+                    new_end += (0.0 - new_start)
+                    new_start = 0.0
+                    
+                if new_end > video_duration:
+                    new_start -= (new_end - video_duration)
+                    new_end = video_duration
+                    
+                # Final clamp in case video itself is shorter than min_duration
+                new_start = max(0.0, new_start)
+                new_end = min(video_duration, new_end)
+                
+                seg["start_sec"] = new_start
+                seg["end_sec"] = new_end
+                
+        except (ValueError, TypeError):
+            pass
+            
+    return segments
 
 
 def early_deduplicate_segments(segments: list) -> list:
@@ -867,6 +927,7 @@ def process_single_video(
 
     # Removed early dedup so that all candidate segments make it to the UI library
     parsed["best_segments"] = merge_adjacent(parsed.get("best_segments", []))
+    parsed["best_segments"] = expand_segments(parsed["best_segments"], min_duration=2.5, video_duration=dur)
     parsed["best_segments"] = clamp_segments(parsed.get("best_segments", []), dur)
     parsed["segments"]      = clamp_segments(parsed.get("segments",      []), dur)
 
@@ -1181,6 +1242,29 @@ def run_full_analysis(
 
     if len(survived) >= 2 and not use_uploaded_order:
         logging.info("\nRequesting story order from model...")
+        
+        # Determine landscape vs portrait for each clip to help the LLM prioritize vertical clips
+        for seg in survived:
+            try:
+                is_img = seg.get("is_image", False) or Path(seg["video_path"]).suffix.lower() in (".jpg", ".jpeg", ".png", ".heic")
+                import cv2
+                if is_img:
+                    frame = cv2.imread(str(seg["video_path"]))
+                    if frame is not None:
+                        eff_h, eff_w = frame.shape[:2]
+                    else:
+                        eff_w, eff_h = 1080, 1920
+                else:
+                    cap = cv2.VideoCapture(str(seg["video_path"]))
+                    eff_w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+                    eff_h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                    cap.release()
+                
+                input_aspect = eff_w / eff_h if eff_h else 1
+                seg["is_landscape"] = input_aspect > 1.0
+            except Exception:
+                seg["is_landscape"] = False
+
         story_prompt = build_story_order_prompt(survived, all_results, directives, focus)
         t0 = time.time()
         raw_order = None
@@ -1212,13 +1296,24 @@ def run_full_analysis(
             seen = set()
             clean_order = []
             clean_roles = []
-            for pos, idx in enumerate(order):
-                if isinstance(idx, int) and 0 <= idx < n and idx not in seen:
-                    clean_order.append(idx)
+            for pos, idx_or_group in enumerate(order):
+                if isinstance(idx_or_group, list):
+                    group = []
+                    for idx in idx_or_group:
+                        if isinstance(idx, int) and 0 <= idx < n and idx not in seen:
+                            group.append(idx)
+                            seen.add(idx)
+                        else:
+                            logging.info(f"  ⚠️  Story order: dropping invalid/duplicate index {idx} in group")
+                    if group:
+                        clean_order.append(group if len(group) > 1 else group[0])
+                        clean_roles.append(roles[pos] if pos < len(roles) else "build")
+                elif isinstance(idx_or_group, int) and 0 <= idx_or_group < n and idx_or_group not in seen:
+                    clean_order.append(idx_or_group)
                     clean_roles.append(roles[pos] if pos < len(roles) else "build")
-                    seen.add(idx)
+                    seen.add(idx_or_group)
                 else:
-                    logging.info(f"  ⚠️  Story order: dropping invalid/duplicate index {idx}")
+                    logging.info(f"  ⚠️  Story order: dropping invalid/duplicate index {idx_or_group}")
 
             # Append any clips the LLM forgot to include
             missing = [i for i in range(n) if i not in seen]
@@ -1253,73 +1348,187 @@ def run_full_analysis(
             )
             logging.info(f"Story ordering failed ({e}), keeping original order.")
 
+    # ── POST-PROCESS: Force all solo landscape clips into split-screen grids ──
+    def enforce_landscape_grids(order: list, survived: list) -> list:
+        """
+        STEP 1: Fully flatten the entire LLM order — including breaking apart any
+        existing grids the LLM formed. This catches cases where the LLM cheated by
+        jamming portrait clips into a grid just to satisfy the landscape rule.
+
+        STEP 2: Walk the flat list in original sequence order. Split clips into
+        landscape vs portrait buckets, preserving their relative positions.
+
+        STEP 3: Form pure landscape-only grids (3 at a time). If fewer than 3
+        landscape clips exist, they fall back to playing individually.
+
+        STEP 4: Interleave the grids and portrait clips back together, placing
+        each grid at the position of its first constituent clip.
+        """
+        # ── STEP 1: Flatten everything into (original_pos, clip_idx) pairs ──
+        flat = []  # list of (original_position_in_order, clip_index)
+        for pos, item in enumerate(order):
+            if isinstance(item, list):
+                # Existing grid — break it apart and treat each clip individually
+                for sub_idx in item:
+                    flat.append((pos, sub_idx))
+            else:
+                flat.append((pos, item))
+
+        # ── STEP 2: Separate landscape vs portrait clips ──
+        landscape_clips = []   # (original_pos, clip_idx) for landscape clips
+        portrait_clips  = []   # (original_pos, clip_idx) for portrait clips
+
+        for (pos, idx) in flat:
+            seg = survived[idx]
+            if seg.get("is_landscape", False):
+                landscape_clips.append((pos, idx))
+            else:
+                portrait_clips.append((pos, idx))
+
+        n_landscape = len(landscape_clips)
+
+        if n_landscape < 3:
+            # Not enough landscape clips for even one grid — return original order untouched
+            logging.info(
+                f"  ℹ️  [enforce_landscape_grids] Only {n_landscape} landscape clip(s) total "
+                f"(including inside LLM grids). Not enough for a pure grid. Restoring individual playback."
+            )
+            # Reconstruct order as all-individual (break up any bad mixed grids)
+            return [idx for (_, idx) in flat]
+
+        # ── STEP 3: Form pure landscape-only grids ──
+        n_full_grids = n_landscape // 3
+        n_leftover   = n_landscape % 3
+
+        logging.info(
+            f"  🔲 [enforce_landscape_grids] {n_landscape} landscape clip(s) found. "
+            f"Forming {n_full_grids} pure landscape grid(s), {n_leftover} individual leftover(s)."
+        )
+
+        landscape_indices = [idx for (_, idx) in landscape_clips]
+        grids = [landscape_indices[g * 3 : g * 3 + 3] for g in range(n_full_grids)]
+        leftover_landscape = landscape_indices[n_full_grids * 3:]
+
+        # ── STEP 4: Rebuild the final order ──
+        # Strategy: walk through `flat` in order. When we hit the first clip of
+        # a landscape group, emit the grid. Skip subsequent clips in that group.
+        # Portrait clips get emitted as-is. Leftover landscape clips also as-is.
+
+        grid_inserted_at = set()   # which grid numbers have been emitted
+        landscape_rank_map = {idx: rank for rank, (_, idx) in enumerate(landscape_clips)}
+
+        new_order = []
+        for (pos, idx) in flat:
+            seg = survived[idx]
+            if seg.get("is_landscape", False):
+                rank = landscape_rank_map[idx]
+                group_num = rank // 3
+
+                if group_num >= n_full_grids:
+                    # Leftover landscape — play individually
+                    new_order.append(idx)
+                elif group_num not in grid_inserted_at:
+                    # First clip of this group → emit the whole grid
+                    new_order.append(grids[group_num])
+                    grid_inserted_at.add(group_num)
+                # else: 2nd or 3rd clip of an already-emitted grid → skip
+            else:
+                new_order.append(idx)
+
+        return new_order
+
+    # Only enforce grids when the LLM ran (not when using uploaded order)
+    if not use_uploaded_order and len(survived) >= 2:
+        story_order = enforce_landscape_grids(story_order, survived)
+        logging.info(f"Story order (after grid enforcement): {story_order}")
+
     # ── Apply story ordering to survived clips ───────────────────────────────
     ordered_survived = []
+
     actually_used_keys = set()
-    for position, seg_idx in enumerate(story_order):
-        seg = survived[seg_idx].copy()
-        seg["is_used"]        = True
-        seg["story_position"] = position
+    for position, idx_or_group in enumerate(story_order):
         
-        # Adjust segment timings for professional pacing and visual storytelling
-        loc_lower = str(seg.get("location_tag", "")).lower()
-        desc_lower = str(seg.get("what_happens", "")).lower()
-        subjs_lower = " ".join([str(s).lower() for s in seg.get("primary_subjects", [])])
-        combined_text = f"{loc_lower} {desc_lower} {subjs_lower}"
+        def apply_pacing(seg_obj):
+            loc_lower = str(seg_obj.get("location_tag", "")).lower()
+            desc_lower = str(seg_obj.get("what_happens", "")).lower()
+            subjs_lower = " ".join([str(s).lower() for s in seg_obj.get("primary_subjects", [])])
+            combined_text = f"{loc_lower} {desc_lower} {subjs_lower}"
 
-        start = float(seg["start_sec"])
-        end = float(seg["end_sec"])
-        duration = end - start
-        video_dur = float(seg.get("video_duration_sec", 999.0))
+            start = float(seg_obj["start_sec"])
+            end = float(seg_obj["end_sec"])
+            duration = end - start
+            video_dur = float(seg_obj.get("video_duration_sec", 999.0))
 
-        # Check if the segment is high-energy action
-        is_action = any(kw in combined_text for kw in ["pool", "swim", "water", "action", "ping", "pong", "tennis", "play", "jump", "active", "splash", "game"])
-        # Check if it is a slow/atmospheric beauty shot (temple, candles, sunset, reflection)
-        is_slow = any(kw in combined_text for kw in ["sunset", "candle", "temple", "serene", "calm", "reflection", "slow", "beauty", "scenery", "night"])
+            is_action = any(kw in combined_text for kw in ["pool", "swim", "water", "action", "ping", "pong", "tennis", "play", "jump", "active", "splash", "game"])
+            is_slow = any(kw in combined_text for kw in ["sunset", "candle", "temple", "serene", "calm", "reflection", "slow", "beauty", "scenery", "night"])
 
-        if is_action:
-            # High-energy active footage: fast, dynamic, exactly 1.5 - 2.0s
-            target_dur = min(2.0, max(1.5, duration))
-            target_end = min(video_dur, start + target_dur)
-            seg["end_sec"] = round(target_end, 2)
-        elif is_slow:
-            # Slower atmospheric beauty shots: let it linger for 3.0 - 4.0s (up to max available)
-            target_dur = max(3.0, min(4.0, duration))
-            target_end = min(video_dur, start + target_dur)
-            seg["end_sec"] = round(target_end, 2)
-        else:
-            # Standard clips: capped at 3.0 seconds
-            if duration > 3.0:
-                seg["end_sec"] = round(start + 3.0, 2)
+            if is_action:
+                target_dur = min(2.0, max(1.5, duration))
+                target_end = min(video_dur, start + target_dur)
+                seg_obj["end_sec"] = round(target_end, 2)
+            elif is_slow:
+                target_dur = max(3.0, min(4.0, duration))
+                target_end = min(video_dur, start + target_dur)
+                seg_obj["end_sec"] = round(target_end, 2)
+            else:
+                if duration > 3.0:
+                    seg_obj["end_sec"] = round(start + 3.0, 2)
 
-        if seg["end_sec"] <= seg["start_sec"] + 0.1:
-            seg["end_sec"] = round(seg["start_sec"] + 0.1, 2)
+            if seg_obj["end_sec"] <= seg_obj["start_sec"] + 0.1:
+                seg_obj["end_sec"] = round(seg_obj["start_sec"] + 0.1, 2)
+            return seg_obj
         
-        # Enforce logical roles based on position: hook at index 0, payoff at the end
+        # Determine global role and transition for this position
         role = story_roles[position] if position < len(story_roles) else "build"
-        if position == 0:
-            role = "hook"
-        elif position == len(story_order) - 1:
-            role = "payoff"
-        elif role in ("hook", "payoff"):
-            role = "build"
-            
-        seg["story_role"]     = role
-        if position == 0 and story_reasoning:
-            seg["global_story_reasoning"] = story_reasoning
-
-        # Attach transition metadata if present and within range
+        if position == 0: role = "hook"
+        elif position == len(story_order) - 1: role = "payoff"
+        elif role in ("hook", "payoff"): role = "build"
+        
+        next_trans = None
+        next_trans_dur = None
         if position < len(story_order) - 1:
             if story_transitions and position < len(story_transitions):
-                seg["next_transition"] = story_transitions[position]
+                next_trans = story_transitions[position]
             if story_transition_durations and position < len(story_transition_durations):
                 try:
-                    seg["next_transition_duration"] = float(story_transition_durations[position])
-                except (ValueError, TypeError):
-                    pass
+                    next_trans_dur = float(story_transition_durations[position])
+                except (ValueError, TypeError): pass
+
+        if isinstance(idx_or_group, list):
+            # Process split screen group
+            grouped_segs = []
+            for sub_idx in idx_or_group:
+                sub_seg = survived[sub_idx].copy()
+                sub_seg["is_used"] = True
+                sub_seg = apply_pacing(sub_seg)
+                grouped_segs.append(sub_seg)
+                actually_used_keys.add((sub_seg["video_path"], sub_seg["start_sec"], sub_seg["end_sec"]))
             
-        ordered_survived.append(seg)
-        actually_used_keys.add((seg["video_path"], seg["start_sec"], seg["end_sec"]))
+            group_obj = {
+                "is_split_screen": True,
+                "is_used": True,
+                "story_position": position,
+                "story_role": role,
+                "clips": grouped_segs
+            }
+            if next_trans: group_obj["next_transition"] = next_trans
+            if next_trans_dur is not None: group_obj["next_transition_duration"] = next_trans_dur
+            if position == 0 and story_reasoning: group_obj["global_story_reasoning"] = story_reasoning
+            
+            ordered_survived.append(group_obj)
+        else:
+            seg = survived[idx_or_group].copy()
+            seg["is_used"] = True
+            seg = apply_pacing(seg)
+            seg["story_position"] = position
+            seg["story_role"] = role
+            
+            if next_trans: seg["next_transition"] = next_trans
+            if next_trans_dur is not None: seg["next_transition_duration"] = next_trans_dur
+            if position == 0 and story_reasoning: seg["global_story_reasoning"] = story_reasoning
+                
+            ordered_survived.append(seg)
+            actually_used_keys.add((seg["video_path"], seg["start_sec"], seg["end_sec"]))
 
     def enforce_no_consecutive_same_source(ordered_segs):
         """Only prevent clips from the exact same source video file appearing back-to-back."""

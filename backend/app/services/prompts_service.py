@@ -301,12 +301,12 @@ Rules:
 - Prefer 1–3 strong segments. Max 5. Stay within {duration}s. Ensure the key narrative arc is represented: if the video has a clear celebratory, interactive, or conclusive payoff moment at the end, you MUST include a segment for it.
 - YOU MUST include "best_segments" in the JSON output.
 - CRITICAL: You MUST use real timestamps from the frames and real 1-10 scores instead of placeholder types.
-- camera_rotation: Always set this to 0 (do not attempt to auto-rotate).
+- camera_rotation: If the physical subjects/gravity in the video are completely SIDEWAYS (meaning the video was recorded horizontally but saved as a vertical portrait file), output 90 or 270 to rotate them upright. Otherwise, strictly output 0.
 
 Return JSON:
 {{
   "video_summary": "string — Describe the actual visual subjects, people, key objects, and activities in the video, plus a note on camera movement (1-2 sentences).",
-  "camera_rotation": 0,
+  "camera_rotation": "int (0, 90,or 270)",
   "detected_scenario": "A|B|C|D|E|F",
   "overall_mood": "string",
   "overall_vibe": "string",
@@ -386,7 +386,12 @@ def build_story_order_prompt(segments: list, all_results: list, directives: str 
     for i, seg in enumerate(segments):
         dur = round(float(seg["end_sec"]) - float(seg["start_sec"]), 2)
         is_img_val = seg.get("is_image", False) or Path(seg.get("video_path", "")).suffix.lower() in (".jpg", ".jpeg", ".png", ".heic")
-        clip_type = "Static Photo" if is_img_val else "Video"
+        is_landscape = seg.get("is_landscape", False)
+        
+        if is_img_val:
+            clip_type = "Horizontal Photo" if is_landscape else "Vertical Photo"
+        else:
+            clip_type = "Horizontal Video" if is_landscape else "Vertical Video"
 
         seg_lines.append({
             "index": i,
@@ -425,11 +430,17 @@ def build_story_order_prompt(segments: list, all_results: list, directives: str 
         if entry["similar_to"]:
             similar_note = f"\n⚠️  SIMILAR TO: CLIP {', CLIP '.join(str(x).zfill(2) for x in entry['similar_to'])} — DO NOT place these back-to-back. Separate with a contrasting clip type."
 
+        w = seg.get("width", 0)
+        h = seg.get("height", 0)
+        is_landscape = seg.get("is_landscape", False)
+        aspect = "Landscape (16:9) - SPLIT SCREEN ELIGIBLE" if is_landscape else "Portrait"
+
         final_seg_lines.append(
             f"""
 CLIP {i:02d}
 Type: {entry['clip_type']}
 Duration: {entry['dur']}s
+Aspect Ratio: {aspect}
 Phase: {seg.get("journey_phase", "unknown")}
 Location: {seg.get("location_tag", "unknown")}
 Role: {seg.get("narrative_role", "unknown")}
@@ -514,6 +525,17 @@ Prioritize the chronological flow, subject focus, or progression requested by th
 - STRICT LOCATION GROUPING: Within and across the Acts, you MUST group clips from the same physical location/scene together as a contiguous block. Once you show a location, play all clips from that location before moving on. Do NOT jump back and forth between locations (e.g., location A -> location B -> location A is strictly forbidden).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPLIT-SCREEN GRIDS (NEW FEATURE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+You have the power to show EXACTLY 3 clips AT THE EXACT SAME TIME by stacking them vertically in a split-screen grid.
+- ONLY do this for clips marked "Landscape (16:9) - SPLIT SCREEN ELIGIBLE". This includes BOTH "Horizontal Video" and "Horizontal Photo" clips.
+- HARD RULE: You are STRICTLY FORBIDDEN from playing "Landscape" clips individually unless the user explicitly forbids grids, or if you mathematically do not have enough clips. You MUST aggressively group EVERY single landscape clip into 3-clip grids. If you have 6 landscape clips, you MUST create TWO separate grids!
+- You MUST group exactly 3 clips at a time. Never 2 clips. You can group 3 videos, 3 photos, or a mix of both!
+- **SANDWICH RULE:** If you find 2 highly related "Horizontal Video" clips, but cannot find a 3rd video to complete the grid, you MUST grab a 16:9 "Horizontal Photo" and place it in the MIDDLE of the two videos (e.g., `[video_idx, photo_idx, video_idx]`). This creates a beautiful "sandwich" layout.
+- THE COLLAGE RULE: Instead of grouping similar clips, group completely distinct and contrasting clips (e.g., a mountain, a face, and a plate of food) to create a high-energy, fast-paced collage effect. Show the variety of the experience!
+- To group them, output a nested array in your `order` array. For example: `"order": [0, [1, 2, 3], 4]` means play clip 0, then play clips 1, 2, and 3 simultaneously stacked, then play clip 4.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 3 — CHOOSE FLUID AND EMOTIONAL TRANSITIONS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -537,8 +559,8 @@ No code fences.
   "removed_clips": [],
   "narrative_template": "State the overarching template you chose (e.g., 'Arrival to Departure', 'Day to Night', etc.)",
   "full_story": "2-3 sentence cinematic description of the emotional progression of the reel",
-  "order": [4, 1, 0, 6, 2, 7, 5, 8], // MUST contain ALL survived clip indices.
-  "roles": ["hook", "build", "build", "build", "build", "build", "build", "payoff"],
+  "order": [4, 1, 0, [6, 2, 8], 7, 10], // Use nested arrays like [6, 2, 8] to group EXACTLY 3 landscape clips into a split-screen grid!
+  "roles": ["hook", "build", "build", "build", "build", "build", "payoff"],
   "energy_flow": ["dramatic", "movement", "calm", "atmospheric", "steady", "curious", "intense", "epic"],
   "transitions": ["fade", "zoom_dissolve", "dissolve", "cut", "zoom_in", "fade", "circle_crop"], // Transition name between consecutive clips in order. Length MUST be exactly len(order) - 1. Choose mostly FLUID transitions: fade, dissolve, zoom_dissolve, zoom_in, zoom_out, circle_crop, cut (50ms micro-fade). Avoid wipes/slides unless high-action.
   "transition_durations": [0.5, 0.4, 0.5, 0.05, 0.5, 0.5, 0.5], // Duration of each transition in seconds. Length MUST be exactly len(order) - 1.
@@ -546,13 +568,14 @@ No code fences.
 }}
 
 CRITICAL RULES:
+- PRIORITIZE VERTICAL: Since the final output is a portrait reel, vertical clips are strongly preferred. However, if the footage is mostly landscape, feel free to use horizontal clips and group them into split-screens.
 - order and roles MUST be same length
 - transitions and transition_durations MUST be of length (len(order) - 1)
 - Choose mostly FLUID, organic transitions (fade, dissolve, zoom_dissolve, zoom_in, cut). Avoid wipes and slides unless representing continuous high-action sports footage (like pool action or ping pong play).
 - no duplicate clips in order
 - removed_clips MUST NOT appear in order
 - You MUST include ALL clips in 'order' that you did not explicitly remove in 'removed_clips'. Do NOT drop clips silently.
-- CLIP COUNT CHECK: There are {len(segments)} clips (indices 0 to {len(segments)-1}). Your 'order' array MUST contain exactly {len(segments)} minus len(removed_clips) indices.
+- CLIP COUNT CHECK: There are {len(segments)} clips (indices 0 to {len(segments)-1}). You MUST include all clips that you did not remove. If you use split-screen grids, the total number of individual clip indices across your entire `order` array (including inside nested arrays) MUST equal {len(segments)} minus len(removed_clips). The `order` array itself may have fewer entries because a grid groups 3 clips into 1 entry!
 - STRICT LOCATION GROUPING: Unless explicitly requested by the user's directives, you MUST group clips from the same physical location/scene together contiguously. Do NOT alternate or interleave locations. Once a location is shown, all clips from that location must finish playing before moving to the next.
 - CRITICAL: YOU MUST STRICTLY FOLLOW THESE USER EDITING DIRECTIVES:
 {directives}
@@ -634,6 +657,17 @@ Your job is ONLY to:
 4. Ensure no consecutive same-type clips (swap adjacent clips if needed).
 5. Choose the best PAYOFF (final clip) within Act III.
 6. STRICT LOCATION GROUPING: You MUST group clips from the same physical location/scene together as a contiguous block. Do NOT jump back and forth between locations (e.g. location A -> location B -> location A is strictly forbidden).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SPLIT-SCREEN GRIDS (NEW FEATURE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+You have the power to show EXACTLY 3 clips AT THE EXACT SAME TIME by stacking them vertically in a split-screen grid.
+- ONLY do this for clips marked "Landscape (16:9) - SPLIT SCREEN ELIGIBLE". This includes BOTH "Horizontal Video" and "Horizontal Photo" clips.
+- HARD RULE: You are STRICTLY FORBIDDEN from playing "Landscape" clips individually unless the user explicitly forbids grids, or if you mathematically do not have enough clips. You MUST aggressively group EVERY single landscape clip into 3-clip grids. If you have 6 landscape clips, you MUST create TWO separate grids!
+- You MUST group exactly 3 clips at a time. Never 2 clips. You can group 3 videos, 3 photos, or a mix of both!
+- **SANDWICH RULE:** If you find 2 highly related "Horizontal Video" clips, but cannot find a 3rd video to complete the grid, you MUST grab a 16:9 "Horizontal Photo" and place it in the MIDDLE of the two videos (e.g., `[video_idx, photo_idx, video_idx]`). This creates a beautiful "sandwich" layout.
+- THE COLLAGE RULE: Instead of grouping similar clips, group completely distinct and contrasting clips (e.g., a mountain, a face, and a plate of food) to create a high-energy, fast-paced collage effect. Show the variety of the experience!
+- To group them, output a nested array in your `order` array. For example: `"order": [0, [1, 2, 3], 4]` means play clip 0, then play clips 1, 2, and 3 simultaneously stacked, then play clip 4.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 HOOK RULES
@@ -755,7 +789,7 @@ No code fences.
 
   "full_story": "2-3 sentence cinematic description of the emotional progression of the reel",
 
-  "order": [4, 1, 0, 6, 2, 7, 5, 8], // MUST contain ALL {len(segments)} clip indices (0 to {len(segments)-1}). Do NOT skip any!
+  "order": [4, 1, 0, [6, 2, 8], 7, 5, 9], // Use nested arrays like [6, 2, 8] for split-screen. MUST contain exactly 3 clips if used. MUST contain ALL {len(segments)} clip indices. Do NOT skip any!
 
   "roles": [
     "hook",
@@ -803,17 +837,17 @@ No code fences.
 }}
 
 CRITICAL RULES:
+- PRIORITIZE VERTICAL: Since the final output is a portrait reel, vertical clips are strongly preferred. However, if the footage is mostly landscape, feel free to use horizontal clips and group them into split-screens.
 - order and roles MUST be same length
 - transitions and transition_durations MUST be of length (len(order) - 1)
 - Choose mostly FLUID, organic transitions (fade, dissolve, zoom_dissolve, zoom_in, cut). Avoid wipes and slides unless representing continuous high-action sports footage (like pool action or ping pong play).
 - no duplicate clips in order
 - removed_clips MUST NOT appear in order
 - You MUST include ALL clips in 'order' that you did not explicitly remove in 'removed_clips'. Do NOT drop clips silently.
-- CLIP COUNT CHECK: There are {len(segments)} clips (indices 0 to {len(segments)-1}). Your 'order' array MUST contain exactly {len(segments)} minus len(removed_clips) indices. If you have 12 clips and removed 0, 'order' MUST have 12 entries.
+- CLIP COUNT CHECK: There are {len(segments)} clips (indices 0 to {len(segments)-1}). You MUST include all clips that you did not remove. If you use split-screen grids, the total number of individual clip indices across your entire `order` array (including inside nested arrays) MUST equal {len(segments)} minus len(removed_clips). The `order` array itself may have fewer entries because a grid groups 3 clips into 1 entry!
 - prioritize emotion over chronology
 - prioritize pacing over documentation
 - prioritize cinematic storytelling over logical sequencing
 {directives_reminder}
 {focus_constraint}
-CRITICAL REASONING CONSTRAINT: Your thinking block (<think>...</think>) MUST be under 100 tokens. Summarize in 3 sentences max, then immediately output the JSON.
 """
