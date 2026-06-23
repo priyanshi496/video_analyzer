@@ -18,8 +18,9 @@ from app.core.security import get_current_user
 router = APIRouter()
 
 class MusicRequest(BaseModel):
-    mode: Literal["ai", "custom", "none"] = "ai"
+    mode: Literal["ai", "custom", "none", "suno"] = "ai"
     custom_query: Optional[str] = None      # e.g. "Satranga Arijit Singh"
+    instrumental: bool = True
 
 class AnalyzeRequest(BaseModel):
     vibe: VibePreset = VibePreset.CINEMATIC  # Preset vibe for the reel

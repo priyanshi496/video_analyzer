@@ -1575,7 +1575,7 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                 # Check for music integration
                 if music_config and music_config.get("mode") != "none":
                     logging.info(f"  🎵 [Pipeline] Running music selection flow. Mode: {music_config.get('mode')}")
-                    from app.services.music_service import resolve_custom_music, pick_ai_music, mix_music_into_video
+                    from app.services.music_service import resolve_custom_music, pick_ai_music, mix_music_into_video, resolve_suno_music
                     import os
                     
                     music_path = None
@@ -1583,6 +1583,14 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                         music_path = resolve_custom_music(music_config["custom_query"], tmpdir)
                     elif music_config.get("mode") == "ai":
                         music_path = pick_ai_music(vibe, final_segs, tmpdir)
+                    elif music_config.get("mode") == "suno":
+                        music_path = resolve_suno_music(
+                            vibe=vibe,
+                            final_segs=final_segs,
+                            instrumental=music_config.get("instrumental", True),
+                            tmpdir=tmpdir
+                        )
+
                         
                     if music_path and os.path.exists(music_path):
                         logging.info(f"  🎵 [Pipeline] Music resolved to local path: {music_path}. Mixing...")

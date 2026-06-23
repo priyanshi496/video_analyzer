@@ -299,3 +299,182 @@ def mix_music_into_video(video_path: str, music_path: str, output_path: str):
         logger.error(f"FFmpeg mixing failed. Return code: {result.returncode}. Stderr: {result.stderr}")
         raise RuntimeError(f"FFmpeg mixing failed: {result.stderr}")
     logger.info(f"Successfully mixed music into {output_path}")
+
+def generate_suno_prompt_from_descriptions(vibe: str, final_segs: list, instrumental: bool) -> str:
+    """
+    Extracts mood, vibe, and visual summary descriptions from the segment metadata
+    and queries the LLM to output a concise, highly-stylized, comma-separated music prompt 
+    appropriate for Suno AI music generation.
+    """
+    from app.services.llm_service import call_openrouter_text
+    
+    descriptions = []
+    for idx, seg in enumerate(final_segs):
+        desc = f"Segment {idx + 1}: {seg.get('what_happens', '')}. Mood: {seg.get('mood', '') or seg.get('overall_mood', '')}."
+        descriptions.append(desc)
+    
+    full_desc = "\n".join(descriptions)
+    
+    inst_str = "instrumental (no vocals or lyrics)" if instrumental else "with vocals/lyrics"
+    
+    prompt = (
+        f"You are a music prompt designer for Suno AI. Based on the following visual descriptions and mood flow of a video, "
+        f"create a music prompt for generating a background track.\n\n"
+        f"Vibe Preset: {vibe}\n"
+        f"Music style requested: {inst_str}\n\n"
+        f"Video Highlight Descriptions:\n{full_desc}\n\n"
+        f"Rules for the prompt:\n"
+        f"1. Describe the genre, instrumentation, mood, pacing/tempo, and overall style.\n"
+        f"2. Be concise and comma-separated (e.g. 'upbeat acoustic folk, warm acoustic guitar, happy whistling, positive vibe, midtempo, 120 bpm').\n"
+        f"3. Must be under 150 characters total.\n"
+        f"4. Do NOT include track names, artist names, quotes, markdown, or any surrounding text. Just output the prompt itself.\n"
+        f"Suno prompt:"
+    )
+    
+    try:
+        res = call_openrouter_text(prompt, model="google/gemini-flash-1.5-8b")
+        cleaned = res.strip().replace('"', '').replace("'", "")
+        cleaned = cleaned[:200]
+        logger.info(f"Generated Suno prompt: '{cleaned}'")
+        return cleaned
+    except Exception as e:
+        logger.error(f"Failed to generate Suno prompt: {e}")
+        if instrumental:
+            return f"uplifting cinematic instrumental, {vibe} background music, rich production"
+        else:
+            return f"uplifting vocal song, {vibe} style music"
+
+def generate_suno_music(prompt: str, output_path: str, instrumental: bool) -> bool:
+    """
+    Generates music via sunoapi.org REST API and saves the output file.
+    """
+    import requests
+    import time
+    
+    api_key = os.environ.get("SUNO_API_KEY")
+    if not api_key:
+        logger.error("No SUNO_API_KEY found in environment variables.")
+        return False
+        
+    base_url = "https://api.sunoapi.org/api/v1"
+    
+    payload = {
+        "model": "V4",
+        "customMode": False,
+        "instrumental": instrumental,
+        "callBackUrl": "",
+        "prompt": prompt[:500]
+    }
+    
+    try:
+        logger.info(f"Submitting Suno generation request with prompt: '{prompt}'")
+        resp = requests.post(
+            f"{base_url}/generate",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json=payload,
+            timeout=30
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        
+        task_id = data.get("data", {}).get("taskId") or data.get("taskId")
+        if not task_id:
+            logger.error(f"No taskId found in Suno response: {data}")
+            return False
+            
+        logger.info(f"Suno task submitted successfully. Task ID: {task_id}. Polling for completion...")
+        
+        # Poll for completion
+        max_wait = 300
+        poll_interval = 20
+        elapsed = 0
+        
+        while elapsed < max_wait:
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+            
+            poll_resp = requests.get(
+                f"{base_url}/generate/record-info",
+                params={"taskId": task_id},
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=30
+            )
+            poll_resp.raise_for_status()
+            result = poll_resp.json()
+            
+            status = result.get("data", {}).get("status") or result.get("status", "")
+            if status == "SUCCESS":
+                tracks = result.get("data", {}).get("data", []) or result.get("data", [])
+                if not tracks:
+                    logger.error("Suno returned SUCCESS but no tracks list.")
+                    return False
+                    
+                # Get the first track
+                track = tracks[0]
+                audio_url = track.get("audio_url")
+                if not audio_url:
+                    logger.error("No audio_url found in successful Suno track.")
+                    return False
+                    
+                logger.info(f"Suno generation completed. Downloading from {audio_url}...")
+                dl_resp = requests.get(audio_url, timeout=120)
+                dl_resp.raise_for_status()
+                
+                output_path_obj = Path(output_path)
+                output_path_obj.parent.mkdir(parents=True, exist_ok=True)
+                output_path_obj.write_bytes(dl_resp.content)
+                logger.info(f"Successfully downloaded Suno music to {output_path}")
+                return True
+                
+            elif status in ("CREATE_TASK_FAILED", "GENERATE_AUDIO_FAILED", "SENSITIVE_WORD_ERROR"):
+                logger.error(f"Suno generation failed with status: {status}")
+                return False
+                
+        logger.error(f"Suno generation timed out after {max_wait} seconds.")
+        return False
+        
+    except Exception as e:
+        logger.error(f"Exception during Suno music generation: {e}")
+        return False
+
+def resolve_suno_music(vibe: str, final_segs: list, instrumental: bool, tmpdir: str) -> str:
+    """
+    Constructs a prompt based on segment descriptions, generates/downloads Suno music,
+    caches the generated music in MinIO to avoid duplicate generation, and returns the local file path.
+    """
+    prompt = generate_suno_prompt_from_descriptions(vibe, final_segs, instrumental)
+    slug = get_song_slug(prompt)
+    if instrumental:
+        slug = f"{slug}-instrumental"
+    else:
+        slug = f"{slug}-vocal"
+    
+    minio_key = f"music/suno/{slug}.mp3"
+    local_path = os.path.join(tmpdir, f"{slug}.mp3")
+    
+    # Check MinIO cache
+    try:
+        if storage_service.object_exists(minio_key):
+            logger.info(f"Cache hit in MinIO for generated Suno music: {minio_key}. Downloading...")
+            storage_service.download_file(minio_key, local_path)
+            return local_path
+    except Exception as e:
+        logger.error(f"Failed to download cached Suno music {minio_key} from MinIO: {e}")
+            
+    # Cache miss -> generate
+    logger.info(f"Cache miss for {minio_key}. Triggering Suno AI generation...")
+    success = generate_suno_music(prompt, local_path, instrumental)
+    if success and os.path.exists(local_path):
+        try:
+            logger.info(f"Uploading generated Suno music to MinIO: {minio_key}...")
+            with open(local_path, "rb") as f:
+                storage_service.upload_file_obj(f, minio_key, content_type="audio/mpeg")
+        except Exception as e:
+            logger.error(f"Failed to upload Suno music to MinIO: {e}")
+        return local_path
+        
+    return ""
+
