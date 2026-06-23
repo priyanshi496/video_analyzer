@@ -127,11 +127,20 @@ def get_video_info(path: str) -> Optional[dict]:
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.release()
 
+    width = int(vs.get("width", 0))
+    height = int(vs.get("height", 0))
+    
+    # Check for rotation metadata
+    tags = vs.get("tags", {})
+    rotation = tags.get("rotate", "0")
+    if str(rotation) in ["90", "-90", "270", "-270"]:
+        width, height = height, width
+
     return {
         "path":         path,
         "duration_sec": duration,
-        "width":        int(vs.get("width", 0)),
-        "height":       int(vs.get("height", 0)),
+        "width":        width,
+        "height":       height,
         "fps":          fps,
         "total_frames": total_frames,
     }
@@ -768,6 +777,7 @@ def early_deduplicate_segments(segments: list) -> list:
 
 # ── Single Video Pipeline (runs in a thread) ───────────────────────────────────
 
+
 def process_single_video(
     info: dict,
     api_key: str,
@@ -775,130 +785,114 @@ def process_single_video(
     reference_paths: list,
     directives: str = "",
     audio_analysis: dict = None,
+    total_footage_sec: float = 0.0,
 ) -> dict:
-    # Check cache first thread-safely
-    with CACHE_LOCK:
-        cache = load_cache()
+    import uuid
+    import logging
+    from app.services.cv_service import extract_candidate_segments, analyze_image
+    from app.services.frames_service import extract_frame_at_time
+    from app.services.prompts_service import build_candidate_scoring_prompt, parse_json_response
+    from app.services.llm_service import call_openrouter_multiimage
+
+    path = info["path"]
+    dur = info.get("duration_sec", 0.0)
+    is_image = info.get("is_image", False)
+    width = info.get("width", 1080)
+    height = info.get("height", 1920)
+    is_landscape = (float(width) / float(height) > 1.2) if height else False
     
-    # Incorporate normalized directives into cache key to avoid cache collisions
-    norm_directives = " ".join(directives.lower().split()) if directives else ""
-    cache_key = f"{info['path']}_{info['duration_sec']}_{norm_directives}"
-    if cache_key in cache:
-        cached_val = cache[cache_key]
-        # Validate if frame images actually exist on disk
-        frames_exist = True
-        for frame in cached_val.get("frame_meta", []):
-            if not Path(frame.get("path", "")).exists():
-                frames_exist = False
-                break
-        
-        if frames_exist:
-            logging.info(f"  ✓ [CACHE HIT] Loading cached analysis for {info['path']}")
-            return cached_val
-        else:
-            logging.info(f"  ⚠️  [CACHE HIT] Analysis cached, but timeline frame images are missing on disk for {info['path']}. Regenerating frames...")
-            dur          = info["duration_sec"]
-            chunk_window = CONFIG["chunk_window_sec"]
-            overlap      = CONFIG["chunk_overlap_sec"]
-            all_frame_meta = []
-            
-            if dur <= chunk_window:
-                n_frames = pick_frame_count(dur)
-                all_frame_meta = extract_representative_frames(
-                    info["path"], dur, n_frames, offset_sec=0.0, chunk_label=""
-                )
-            else:
-                starts = []
-                t = 0.0
-                while t < dur:
-                    starts.append(t)
-                    t += chunk_window - overlap
-                for ci, start in enumerate(starts):
-                    window = min(chunk_window, dur - start)
-                    if window < 1.0:
-                        break
-                    label = f"chunk{ci:02d}"
-                    n_frames = pick_frame_count(window)
-                    fm = extract_representative_frames(
-                        info["path"], window, n_frames, offset_sec=start, chunk_label=label
-                    )
-                    all_frame_meta += fm
-            
-            # Update frame_meta in cached value and update cache
-            cached_val["frame_meta"] = all_frame_meta
-            with CACHE_LOCK:
-                cache = load_cache()
-                cache[cache_key] = cached_val
-                save_cache(cache)
-            logging.info(f"  ✓ Re-extracted {len(all_frame_meta)} frame(s) successfully for {info['path']}.")
-            return cached_val
+    logging.info(f"\n▶ [Stage 1] Pre-filtering {path} ({dur:.1f}s) - {width}x{height}")
 
-    dur          = info["duration_sec"]
-    chunk_window = CONFIG["chunk_window_sec"]
-    overlap      = CONFIG["chunk_overlap_sec"]
-    all_frame_meta = []
-
-    logging.info(f"\n▶ {info['path']} ({dur:.1f}s)")
-
-    if dur <= chunk_window:
-        fm, parsed     = analyze_window(info, 0.0, dur, api_key, video_quality_map,
-                                        reference_paths=reference_paths, audio_analysis=audio_analysis,directives=directives)
-        parsed         = auto_recover_segments(parsed)
-        all_frame_meta = fm
-        chunk_analyses = [parsed]
+    # 1. OpenCV Pre-Filter
+    if is_image:
+        candidates = [analyze_image(path)]
     else:
-        starts = []
-        t = 0.0
-        while t < dur:
-            starts.append(t)
-            t += chunk_window - overlap
-        logging.info(f"   Chunked into {len(starts)} windows of ~{chunk_window}s")
-        chunk_analyses = []
-        for ci, start in enumerate(starts):
-            window = min(chunk_window, dur - start)
-            if window < 1.0:
-                break
-            label = f"chunk{ci:02d}"
-            logging.info(f"   Chunk {ci+1}/{len(starts)}: [{start:.1f}s–{start+window:.1f}s]")
-            fm, parsed = analyze_window(info, start, window, api_key, video_quality_map,
-                                        chunk_label=label, reference_paths=reference_paths, audio_analysis=audio_analysis,directives=directives)
-            parsed = auto_recover_segments(parsed)
-            parsed = offset_segments(parsed, start)
-            all_frame_meta += fm
-            chunk_analyses.append(parsed)
-        parsed = merge_chunk_analyses(chunk_analyses, dur)
+        candidates = extract_candidate_segments(path, window_sec=2.0, stride_sec=1.0)
+        
+    if not candidates:
+        logging.warning(f"  ⚠️ No valid candidates found in {path}")
+        return {"video_path": path, "duration_sec": dur, "analysis": {"best_segments": []}}
 
-    # Removed early dedup so that all candidate segments make it to the UI library
-    parsed["best_segments"] = merge_adjacent(parsed.get("best_segments", []))
-    parsed["best_segments"] = clamp_segments(parsed.get("best_segments", []), dur)
-    parsed["segments"]      = clamp_segments(parsed.get("segments",      []), dur)
+    # 2. Dynamic Thresholding based on total_footage_sec
+    if total_footage_sec > 60:
+        top_pct = 0.3
+    elif total_footage_sec > 30:
+        top_pct = 0.5
+    else:
+        top_pct = 0.8
+        
+    candidates.sort(key=lambda c: c.get("quality_score", 0) + c.get("motion_score", 0), reverse=True)
+    num_keep = max(1, int(len(candidates) * top_pct))
+    surviving_candidates = candidates[:num_keep]
+    logging.info(f"  ✓ CV Filter: Kept {num_keep}/{len(candidates)} candidates.")
 
-    # Attach black-frame warning to each best_segment using extracted frames
-    for seg in parsed.get("best_segments", []):
-        relevant_frames = [
-            f for f in all_frame_meta
-            if seg["start_sec"] <= f["abs_timestamp"] <= seg["end_sec"]
-        ]
-        seg["black_frame_warning"] = is_likely_black_clip(relevant_frames)
+    # 3. Extract thumbnails for LLM
+    for i, c in enumerate(surviving_candidates):
+        c["segment_id"] = f"seg_{i}_{uuid.uuid4().hex[:4]}"
+        mid_time = c["start_sec"] + (c["end_sec"] - c["start_sec"]) / 2
+        c["thumbnail"] = extract_frame_at_time(path, mid_time)
+        
+    # 4. Batch to LLM
+    batch_size = 10
+    final_segments = []
+    
+    for i in range(0, len(surviving_candidates), batch_size):
+        batch = surviving_candidates[i:i+batch_size]
+        prompt = build_candidate_scoring_prompt(batch, directives)
+        image_paths = [c["thumbnail"] for c in batch if c.get("thumbnail")]
+        
+        try:
+            raw, parsed = call_openrouter_multiimage(image_paths, prompt, model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
+            parsed_list = parse_json_response(parsed)
+            if isinstance(parsed_list, list):
+                for p in parsed_list:
+                    seg_id = p.get("segment_id")
+                    match = next((c for c in batch if c.get("segment_id") == seg_id), None)
+                    if match:
+                        match["aesthetic_score"] = p.get("aesthetic_score", 5)
+                        match["emotion_tag"] = p.get("emotion_tag", "neutral")
+                        match["scene_type"] = p.get("scene_type", "action")
+                        match["caption"] = p.get("caption", "")
+                        
+                        match["final_score"] = match["quality_score"]*0.3 + match["motion_score"]*0.2 + match.get("aesthetic_score", 5)*0.5
+                        match["priority"] = 100 - match["final_score"] # lower is better for old logic compatibility
+                        match["reason"] = match["caption"]
+                        match["narrative_role"] = match["scene_type"]
+                        match["width"] = width
+                        match["height"] = height
+                        match["is_landscape"] = is_landscape
+                        match["is_image"] = is_image
+                        final_segments.append(match)
+        except Exception as e:
+            logging.error(f"  ⚠️ LLM scoring failed for batch: {e}")
+            # fallback: add batch with average scores
+            for c in batch:
+                c["final_score"] = c["quality_score"]*0.3 + c["motion_score"]*0.2 + 5*0.5
+                c["priority"] = 100 - c["final_score"]
+                c["width"] = width
+                c["height"] = height
+                c["is_landscape"] = is_landscape
+                c["is_image"] = is_image
+                c["caption"] = "Auto-selected by quality fallback (LLM offline)"
+                c["reason"] = c["caption"]
+                c["what_happens"] = c["caption"]
+                c["scene_type"] = "action"
+                c["narrative_role"] = "action"
+                c["emotion_tag"] = "neutral"
+                c["mood"] = "neutral"
+                c["scenario_rule_applied"] = "Fallback"
+                final_segments.append(c)
+                
+    logging.info(f"  ✓ Scored {len(final_segments)} segments via Nemotron.")
 
-    is_fb = "[FALLBACK]" in parsed.get("video_summary", "")
-    tag   = "⚠️  FALLBACK" if is_fb else "✓ Done"
-    logging.info(f"  {tag}: {info['path']}  ({len(parsed.get('best_segments', []))} best segments)")
-
-    res = {
-        "video_path":   info["path"],
+    return {
+        "video_path": path,
         "duration_sec": dur,
-        "frame_meta":   all_frame_meta,
-        "analysis":     parsed,
-        "n_chunks":     len(chunk_analyses),
+        "analysis": {
+            "best_segments": final_segments
+        }
     }
 
-    with CACHE_LOCK:
-        cache = load_cache()
-        cache[cache_key] = res
-        save_cache(cache)
-
-    return res
 
 
 # ── Full Analysis Orchestrator ─────────────────────────────────────────────────
@@ -977,7 +971,8 @@ def run_full_analysis(
                 "journey_phase":      seg.get("journey_phase",          "unknown"),
                 "time_of_day":        seg.get("time_of_day",            "unknown"),
                 "black_frame_warning": seg.get("black_frame_warning",   False),
-                "is_image":           result.get("is_image", False),
+                "is_image":           seg.get("is_image", result.get("is_image", False)),
+                "is_landscape":       seg.get("is_landscape", False),
                 "scene_category":     seg.get("scene_category", "mixed"),
                 "primary_subjects":   seg.get("primary_subjects", []),
                 "what_happens":       seg.get("what_happens", ""),
@@ -1007,7 +1002,7 @@ def run_full_analysis(
             # Dynamically determine the maximum clips allowed for this video based on duration
             first_clip = sorted_clips[0]
             video_dur = float(first_clip.get("video_duration_sec", 30.0))
-            max_clips = 3 if video_dur > 30.0 else 2
+            max_clips = 8 if video_dur > 30.0 else 4
             
             video_kept = [first_clip]
             for clip in sorted_clips[1:]:
@@ -1052,8 +1047,8 @@ def run_full_analysis(
                         
                     if clip_cat != "unknown" and clip_cat == k_cat:
                         # Also check description / reason overlap if categories match but location tags differ
-                        desc_clip = (clip.get("what_happens", "") or clip.get("reason", "")).lower()
-                        desc_k = (k.get("what_happens", "") or k.get("reason", "")).lower()
+                        desc_clip = (clip.get("what_happens") or clip.get("reason") or "").lower()
+                        desc_k = (k.get("what_happens") or k.get("reason") or "").lower()
                         stop_words = {"the", "a", "an", "on", "in", "of", "and", "or", "to", "for", "with", "at", "by", "from"}
                         words_clip = {w.strip(",.!?\"'") for w in desc_clip.split() if len(w) > 2 and w not in stop_words}
                         words_k = {w.strip(",.!?\"'") for w in desc_k.split() if len(w) > 2 and w not in stop_words}
@@ -1123,23 +1118,7 @@ def run_full_analysis(
                 new_segments.append(seg)
                 continue
                 
-            try:
-                is_image = Path(video_path).suffix.lower() in (".jpg", ".jpeg", ".png", ".heic")
-                if is_image:
-                    img = cv2.imread(video_path)
-                    if img is not None:
-                        h, w = img.shape[:2]
-                        is_landscape = (w >= h * 1.05)
-                    else:
-                        is_landscape = False
-                else:
-                    cap = cv2.VideoCapture(video_path)
-                    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    cap.release()
-                    is_landscape = (w >= h * 1.05) if (h > 0) else False
-            except Exception:
-                is_landscape = False
+            is_landscape = seg.get("is_landscape", False)
 
             if is_landscape:
                 landscape_queue.append(seg)
@@ -1191,6 +1170,8 @@ def run_full_analysis(
                         composite_seg["what_happens"] = f"Split screen: Top shows {seg1.get('what_happens', 'something')}. Bottom shows {seg2.get('what_happens', 'something')}."
                         composite_seg["primary_subjects"] = list(set(seg1.get("primary_subjects", []) + seg2.get("primary_subjects", [])))
                         composite_seg["scene_category"] = "split_screen_composite"
+                        composite_seg["is_landscape"] = False
+                        composite_seg["is_image"] = False
                         
                         new_segments.append(composite_seg)
                     except Exception as e:
@@ -1235,16 +1216,37 @@ def run_full_analysis(
     MAX_REEL_SEC = CONFIG.get("max_reel_sec", 60)
     total = 0.0
     kept  = []
-    for seg in sorted(survived, key=lambda s: (
+    
+    # Sort all clips by priority (best first)
+    sorted_survived = sorted(survived, key=lambda s: (
                         get_focus_sort_key(s),
                         int(s.get("priority", 999) or 999),
-                        float(s.get("end_sec", 0)) - float(s.get("start_sec", 0)))):
+                        float(s.get("end_sec", 0)) - float(s.get("start_sec", 0))))
+                        
+    # 1. Guarantee the single best clip from EVERY source video is kept, ignoring budget
+    guaranteed = []
+    seen_videos = set()
+    remaining = []
+    for seg in sorted_survived:
+        v_path = seg["video_path"]
+        if v_path not in seen_videos:
+            seen_videos.add(v_path)
+            guaranteed.append(seg)
+            total += float(seg["end_sec"]) - float(seg["start_sec"])
+        else:
+            remaining.append(seg)
+            
+    kept.extend(guaranteed)
+    
+    # 2. Fill the rest of the budget with the remaining clips
+    for seg in remaining:
         dur = float(seg["end_sec"]) - float(seg["start_sec"])
-        if total + dur <= MAX_REEL_SEC or not kept:
+        if total + dur <= MAX_REEL_SEC:
             kept.append(seg)
             total += dur
         else:
             logging.info(f"  ⏭  Dropped (budget): {seg['video_path']} {seg['start_sec']}s–{seg['end_sec']}s")
+            
     survived = kept
     logging.info(f"Duration budget: {total:.1f}s reel from {len(survived)} survived clips out of {len(best_segments)} total")
 
@@ -1317,8 +1319,9 @@ def run_full_analysis(
                 
                 # We sort the beat assignments by window_index to ensure chronological flow
                 assignments = sorted(parsed_order["beat_assignments"], key=lambda x: x.get("window_index", 0))
+                story_transition_durs = parsed_order.get("transition_durations", [])
                 
-                for assignment in assignments:
+                for i, assignment in enumerate(assignments):
                     idx = assignment.get("clip_index")
                     w_idx = assignment.get("window_index")
                     
@@ -1333,8 +1336,22 @@ def run_full_analysis(
                             seg = survived[idx]
                             orig_start = float(seg.get("start_sec", 0.0))
                             win_dur = float(window["duration"])
+                            speed = float(assignment.get("speed", 1.0))
                             
-                            seg["end_sec"] = orig_start + win_dur
+                            # Compensate for transition duration so xfade doesn't shrink the beat timeline!
+                            trans_dur = 0.0
+                            if i < len(story_transition_durs):
+                                try:
+                                    trans_dur = float(story_transition_durs[i])
+                                except:
+                                    pass
+                            
+                            adjusted_win_dur = win_dur + trans_dur
+                            source_dur = adjusted_win_dur * speed
+                            
+                            seg["end_sec"] = orig_start + source_dur
+                            seg["playback_speed"] = speed
+                            seg["camera_movement"] = assignment.get("camera_movement", "none")
                             seg["story_role"] = assignment.get("reason", "assigned")
                             seg["_beat_window_start"] = window["start_sec"]
                             seg["_beat_window_end"] = window["end_sec"]
@@ -1751,8 +1768,8 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                         raw_start_sec = float(best_hook.get("start_sec", 0.0))
                         
                         # Snap the hook start time to the absolute nearest beat
-                        if beat_map and beat_map.beat_times:
-                            bgm_start_sec = min(beat_map.beat_times, key=lambda b: abs(b - raw_start_sec))
+                        if beat_map and [b['time'] for b in beat_map.beat_grid]:
+                            bgm_start_sec = min([b['time'] for b in beat_map.beat_grid], key=lambda b: abs(b - raw_start_sec))
                         else:
                             bgm_start_sec = raw_start_sec
                             
@@ -1762,13 +1779,15 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                     
                     # --- Build Beat Windows ---
                     beat_windows = []
-                    if beat_map and beat_map.beat_times:
+                    if beat_map and [b['time'] for b in beat_map.beat_grid]:
                         total_vid_dur = sum(v.get("duration_sec", 0) for v in video_infos)
-                        # We force the target duration to be at least 20s as requested
-                        target_dur = max(20.0, total_vid_dur)
+                        # We force the target duration to match the full audio track so it doesn't get cut
+                        target_dur = beat_map.total_duration_sec - bgm_start_sec
+                        if target_dur <= 0:
+                            target_dur = max(20.0, total_vid_dur)
                         
                         beat_windows = build_beat_windows(
-                            beat_times=beat_map.beat_times,
+                            beat_times=[b['time'] for b in beat_map.beat_grid],
                             bgm_start_sec=bgm_start_sec,
                             total_target_duration=target_dur,
                             min_dur_sec=1.0,
@@ -1810,20 +1829,28 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                 
                 if beat_map:
                     try:
-                        from beat_sync.config import SNAP_TOLERANCE_SEC, MIN_CLIP_DURATION_SEC, VERBOSE_LOGGING
-                        from beat_sync.segment_snapper import snap_segments_to_beats
+                        from app.services.edl_service import build_edl
+                        logging.info("  🎵 [BeatSync] Building Edit Decision List (EDL)...")
                         
-                        logging.info("  🎵 [BeatSync] Snapping final segments to beats...")
-                        snapped_segs = snap_segments_to_beats(
-                            segments=final_segs,
-                            beat_map=beat_map,
-                            snap_tolerance_sec=SNAP_TOLERANCE_SEC,
-                            min_clip_duration_sec=MIN_CLIP_DURATION_SEC,
-                            verbose=VERBOSE_LOGGING,
-                            bgm_offset_sec=bgm_start_sec
-                        )
-                        final_segs = snapped_segs
+                        edl_result = build_edl(final_segs, beat_map)
+                        edl = edl_result["edl"]
+                        accent_times = edl_result["accent_times"]
+                        
+                        # Convert EDL format back to final_segs format for DB storage
+                        new_final_segs = []
+                        for idx, slot in enumerate(edl):
+                            new_final_segs.append({
+                                "video_path": slot["source_file"],
+                                "start_sec": slot["clip_in"],
+                                "end_sec": slot["clip_out"],
+                                "cut_time": slot["cut_time"],
+                                "transition": slot["transition"]
+                            })
+                        final_segs = new_final_segs
                         beat_sync_applied = True
+                        
+                        # Make edl globally available for stitcher
+                        global_edl_result = edl_result
                         
                         # Write detailed beat-sync log
                         try:
@@ -1835,8 +1862,8 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                                 all_hooks=all_hooks,
                                 energy_map=energy_map_data,
                                 tempo_bpm=beat_map.tempo_bpm,
-                                beat_times=beat_map.beat_times,
-                                snapped_segments=snapped_segs,
+                                beat_times=[b['time'] for b in beat_map.beat_grid],
+                                snapped_segments=final_segs,
                             )
                         except Exception as _log_err:
                             logging.warning(f"  ⚠️ [BeatSync] Could not write beat sync log: {_log_err}")
@@ -1868,16 +1895,18 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                 clips_dir = Path(tmpdir) / "clips"
                 reel_path = Path(tmpdir) / "final_video.mp4"
                 
-                from app.services.stitch_service import build_reel_from_segments
+                from app.services.stitch_service import build_reel_from_edl
                 
-                # Stitch the (possibly beat-snapped) final_segs
-                build_reel_from_segments(
-                    best_segments=final_segs, 
-                    clips_dir=clips_dir, 
-                    reel_path=reel_path,
-                    bgm_path=bgm_path_str,
-                    bgm_start_sec=bgm_start_sec
-                )
+                if 'global_edl_result' in locals():
+                    build_reel_from_edl(
+                        edl=global_edl_result["edl"],
+                        accent_times=global_edl_result["accent_times"],
+                        beat_map=beat_map,
+                        reel_path=reel_path
+                    )
+                else:
+                    logging.error("No EDL generated!")
+                    raise RuntimeError("No EDL generated")
                 
                 if reel_path.exists():
                     logging.info("  📤 [Pipeline] Uploading final video to MinIO...")
@@ -1885,6 +1914,8 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                     with open(reel_path, "rb") as video_file:
                         storage_service.upload_file_obj(video_file, object_key, content_type="video/mp4")
                     logging.info(f"  ✅ [Pipeline] Final video uploaded to MinIO: {object_key}")
+                    
+                    # Removed duplicate audio saving
                 else:
                     raise FileNotFoundError("Final video file was not created by stitcher.")
                 

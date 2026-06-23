@@ -1,4 +1,9 @@
-import logging
+import re
+
+with open("app/services/stitch_service.py", "r") as f:
+    code = f.read()
+
+new_code = """import logging
 import subprocess
 from pathlib import Path
 
@@ -14,31 +19,30 @@ def build_reel_from_edl(edl: list, accent_times: list, beat_map, reel_path: Path
     filter_complex = ""
     
     for i, slot in enumerate(edl):
-        # Force hard cut on the beats (no custom transitions per user request)
-        slot["transition"] = "hard_cut"
-        slot["t_dur"] = 0.0
+        t_dur = 0.0
+        t_type = slot["transition"]
+        if t_type == "fade":
+            t_dur = 0.1
+        elif t_type == "whip_zoom":
+            t_dur = 0.15
+        elif t_type in ("wiperight", "fadeblack"):
+            t_dur = 0.3
+            
+        slot["t_dur"] = t_dur
         
-        # No need to extend clip bounds for transitions anymore
-        pass
+        if i < len(edl) - 1:
+            slot["clip_out"] += t_dur / 2.0
+        if i > 0:
+            slot["clip_in"] = max(0.0, slot["clip_in"] - (edl[i-1]["t_dur"] / 2.0))
             
     input_idx = 0
     for i, slot in enumerate(edl):
         layout = slot.get("layout", "crop")
         
-        # Disable grid layout per user request (force blur background instead)
-        if False:
-            src_main = slot["source_file"]
-            adds = slot.get("additional_sources", [])
-            
-            src2 = adds[0].get("source", src_main) if len(adds) > 0 else src_main
-            src3 = adds[1].get("source", src_main) if len(adds) > 1 else src_main
-            
+        if layout == "grid_3":
             # 3 Inputs
-            for src in [src_main, src2, src3]:
-                if str(src).lower().endswith(('.jpg', '.jpeg', '.png', '.heic')):
-                    inputs.extend(["-loop", "1", "-t", "999", "-i", src])
-                else:
-                    inputs.extend(["-i", src])
+            src_main = slot["source_file"]
+            inputs.extend(["-i", src_main, "-i", src_main, "-i", src_main])
             
             c1_in = slot["clip_in"]
             c1_out = slot["clip_out"]
@@ -59,27 +63,12 @@ def build_reel_from_edl(edl: list, accent_times: list, beat_map, reel_path: Path
             filter_complex += f"[{idx2}:v]trim=start={c2_in}:duration={dur},setpts=PTS-STARTPTS,scale=1080:607:force_original_aspect_ratio=increase,crop=1080:607,setsar=1[v{i}_2];"
             filter_complex += f"[{idx3}:v]trim=start={c3_in}:duration={dur},setpts=PTS-STARTPTS,scale=1080:607:force_original_aspect_ratio=increase,crop=1080:607,setsar=1[v{i}_3];"
             
-            # Stagger effect: black boxes that reveal the video based on timing
-            t_delay2 = min(0.3, dur * 0.33)
-            t_delay3 = min(0.6, dur * 0.66)
-            
-            filter_complex += f"color=c=black:s=1080x607:d={dur}[blk{i}_2];"
-            filter_complex += f"color=c=black:s=1080x607:d={dur}[blk{i}_3];"
-            
-            filter_complex += f"[blk{i}_2][v{i}_2]overlay=enable='gte(t,{t_delay2})'[v{i}_2_stag];"
-            filter_complex += f"[blk{i}_3][v{i}_3]overlay=enable='gte(t,{t_delay3})'[v{i}_3_stag];"
-            
             # Vstack them and pad
-            filter_complex += f"[v{i}_1][v{i}_2_stag][v{i}_3_stag]vstack=inputs=3[v{i}_stack];"
+            filter_complex += f"[{v{i}_1}][{v{i}_2}][{v{i}_3}]vstack=inputs=3[v{i}_stack];"
             filter_complex += f"[v{i}_stack]pad=1080:1920:0:49:black[v{i}_base];"
             
-        else:
-            # Default to blur_bg instead of crop to prevent ANY video cropping
-            src = slot["source_file"]
-            if str(src).lower().endswith(('.jpg', '.jpeg', '.png', '.heic')):
-                inputs.extend(["-loop", "1", "-t", "999", "-i", src])
-            else:
-                inputs.extend(["-i", src])
+        elif layout == "blur_bg":
+            inputs.extend(["-i", slot["source_file"]])
             dur = slot["clip_out"] - slot["clip_in"]
             idx = input_idx
             input_idx += 1
@@ -95,8 +84,18 @@ def build_reel_from_edl(edl: list, accent_times: list, beat_map, reel_path: Path
             # Overlay
             filter_complex += f"[v{i}_bg_b][v{i}_fg_s]overlay=(W-w)/2:(H-h)/2:shortest=1[v{i}_base];"
             
-        # Ensure correct fps, format, and uniform SAR before accent pulses
-        filter_complex += f"[v{i}_base]fps=30,format=yuv420p,setsar=1[v{i}];"
+        else:
+            # Standard crop (for 9:16 vertical videos)
+            inputs.extend(["-i", slot["source_file"]])
+            dur = slot["clip_out"] - slot["clip_in"]
+            idx = input_idx
+            input_idx += 1
+            
+            filter_complex += f"[{idx}:v]trim=start={slot['clip_in']}:duration={dur},setpts=PTS-STARTPTS,"
+            filter_complex += f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1[v{i}_base];"
+            
+        # Ensure correct fps and format before accent pulses
+        filter_complex += f"[v{i}_base]fps=30,format=yuv420p[v{i}];"
         
     for i, slot in enumerate(edl):
         accents_in_slot = [t for t in accent_times if slot["cut_time"] <= t < (slot["cut_time"] + slot["duration"])]
@@ -135,9 +134,7 @@ def build_reel_from_edl(edl: list, accent_times: list, beat_map, reel_path: Path
     cmd.extend(inputs)
     cmd.extend(["-i", beat_map.bgm_path])
     
-    bgm_start_sec = edl[0]["cut_time"]
-    bgm_end_sec = bgm_start_sec + sum(s["duration"] for s in edl)
-    filter_complex += f";[{input_idx}:a]atrim=start={bgm_start_sec}:end={bgm_end_sec},asetpts=PTS-STARTPTS[final_a]"
+    filter_complex += f";[{input_idx}:a]atrim=start={beat_map.best_section_start}:end={beat_map.best_section_end},asetpts=PTS-STARTPTS[final_a]"
     
     cmd.extend(["-filter_complex", filter_complex])
     cmd.extend(["-map", "[final_v]", "-map", "[final_a]"])
@@ -148,5 +145,14 @@ def build_reel_from_edl(edl: list, accent_times: list, beat_map, reel_path: Path
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         logger.info(f"  🎬 [Stitch] ✓ Render complete: {reel_path}")
     except subprocess.CalledProcessError as e:
-        logger.error(f"  ⚠️ FFmpeg failed! Stderr:\\n{e.stderr}")
+        logger.error(f"  ⚠️ FFmpeg failed! Stderr:\n{e.stderr}")
         raise RuntimeError(f"FFmpeg Single-Graph render failed: {e.stderr}")
+"""
+
+# There is a small typo in the f-string for vstack: `f"[{v{i}_1}]"` should be `f"[v{i}_1]"`
+new_code = new_code.replace('f"[{v{i}_1}][{v{i}_2}][{v{i}_3}]vstack', 'f"[v{i}_1][v{i}_2][v{i}_3]vstack')
+
+with open("app/services/stitch_service.py", "w") as f:
+    f.write(new_code)
+
+print("stitch_service patched.")

@@ -59,6 +59,11 @@ def snap_segments_to_beats(
         # If the segment was already mapped to a specific beat window by the LLM,
         # we don't need to snap it again. Just pass it through.
         if new_seg.get("_beat_snapped", False):
+            try:
+                win_dur = float(new_seg.get("_beat_window_end", 0.0)) - float(new_seg.get("_beat_window_start", 0.0))
+                current_output_playhead += max(0.0, win_dur)
+            except:
+                pass
             snapped.append(new_seg)
             if verbose:
                 logger.info(f"  [Snap] Segment {i}: Already snapped to beat window {new_seg.get('_beat_window_start')} - {new_seg.get('_beat_window_end')}")
@@ -82,9 +87,10 @@ def snap_segments_to_beats(
         # Calculate maximum allowed snapped playhead so we don't exceed the source video's end
         max_allowed_playhead = None
         video_path = seg.get("video_path")
+        is_image = seg.get("is_image", False)
         
         # Ensure we have cv2 imported to read source video duration
-        if video_path and Path(video_path).exists():
+        if not is_image and video_path and Path(video_path).exists():
             try:
                 import cv2
                 cap = cv2.VideoCapture(str(video_path))
@@ -121,7 +127,7 @@ def snap_segments_to_beats(
 
         distance = abs(best_beat - target_audio_playhead)
 
-        if distance > snap_tolerance_sec:
+        if distance > snap_tolerance_sec and not is_image:
             if verbose or True:
                 logger.info(
                     f"  [BeatSync] Seg {i:02d}: nearest beat {best_beat:.3f}s is {distance:.3f}s away "

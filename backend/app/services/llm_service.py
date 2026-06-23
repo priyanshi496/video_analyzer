@@ -42,6 +42,7 @@ OPENROUTER_FALLBACK_COUNT = 0
 NVIDIA_FAIL_COUNT = 0
 NVIDIA_MAX_FAILS = 3
 NVIDIA_UNHEALTHY = False
+NVIDIA_UNHEALTHY_SINCE = 0.0
 
 class NIMRateLimiter:
     def __init__(self, max_rpm=35):
@@ -70,12 +71,13 @@ def reset_nvidia_health():
     NVIDIA_UNHEALTHY = False
 
 def mark_nvidia_failed():
-    global NVIDIA_FAIL_COUNT, NVIDIA_UNHEALTHY
+    global NVIDIA_FAIL_COUNT, NVIDIA_UNHEALTHY, NVIDIA_UNHEALTHY_SINCE
     NVIDIA_FAIL_COUNT += 1
     if NVIDIA_FAIL_COUNT >= NVIDIA_MAX_FAILS:
         if not NVIDIA_UNHEALTHY:
             logger.warning(f"⚠️ NVIDIA NIM has failed {NVIDIA_FAIL_COUNT} times consecutively. Tripping circuit breaker: routing to OpenRouter fallbacks.")
             NVIDIA_UNHEALTHY = True
+            NVIDIA_UNHEALTHY_SINCE = time.time()
 
 def get_api_metrics():
     return {
@@ -103,9 +105,15 @@ def _post_with_retry(payload: dict, headers: dict, timeout: int, label: str = ""
     
     if "nemotron-3-nano-omni-30b-a3b-reasoning" in model_name:
         payload_copy["chat_template_kwargs"] = {"enable_thinking": True}
-        payload_copy["reasoning_budget"] = 128
+        payload_copy["reasoning_budget"] = 2048
         payload_copy["temperature"] = 0.0
         payload_copy["max_tokens"] = min(payload_copy.get("max_tokens", 4096), 4096)
+        
+    global NVIDIA_UNHEALTHY, NVIDIA_UNHEALTHY_SINCE, NVIDIA_FAIL_COUNT
+    if NVIDIA_UNHEALTHY and (time.time() - NVIDIA_UNHEALTHY_SINCE > 120):
+        logger.info("  🔄 Auto-resetting NVIDIA circuit breaker to try again...")
+        NVIDIA_UNHEALTHY = False
+        NVIDIA_FAIL_COUNT = 0
 
     if model_name.startswith("nvidia/") and not model_name.endswith(":free") and settings.NVIDIA_API_KEY and not NVIDIA_UNHEALTHY:
         url = "https://integrate.api.nvidia.com/v1/chat/completions"
@@ -196,8 +204,20 @@ def _post_with_retry(payload: dict, headers: dict, timeout: int, label: str = ""
             
             stripped = content.strip()
             first_brace = stripped.find("{")
-            if first_brace > 0:
-                content = stripped[first_brace:]
+            first_bracket = stripped.find("[")
+            
+            # Find the true start of the JSON structure
+            if first_brace >= 0 and first_bracket >= 0:
+                start_idx = min(first_brace, first_bracket)
+            elif first_brace >= 0:
+                start_idx = first_brace
+            elif first_bracket >= 0:
+                start_idx = first_bracket
+            else:
+                start_idx = 0
+                
+            if start_idx > 0:
+                content = stripped[start_idx:]
             return content, None
 
         except (requests.Timeout, requests.ConnectionError) as e:
@@ -290,16 +310,16 @@ def call_openrouter_multiimage(
             try:
                 from app.services.prompts_service import parse_json_response
                 parsed = parse_json_response(result)
-                if not isinstance(parsed, dict) or ("best_segments" not in parsed and "segments" not in parsed and "journey_phase" not in parsed):
-                    raise ValueError("Parsed JSON response is missing required highlight segments keys.")
-                return result
+                if not (isinstance(parsed, dict) and ("best_segments" in parsed or "segments" in parsed or "journey_phase" in parsed)) and not isinstance(parsed, list):
+                    raise ValueError("Parsed JSON response is missing required keys or is not a list.")
+                return result, parsed
             except Exception as je:
                 logger.warning(f"  ✗ {model_name} returned invalid structure: {je}. Attempting repair...")
                 try:
                     repaired_raw = repair_json_output_text(result)
                     parsed = parse_json_response(repaired_raw)
-                    if isinstance(parsed, dict) and ("best_segments" in parsed or "segments" in parsed or "journey_phase" in parsed):
-                        return repaired_raw
+                    if (isinstance(parsed, dict) and ("best_segments" in parsed or "segments" in parsed or "journey_phase" in parsed)) or isinstance(parsed, list):
+                        return repaired_raw, parsed
                 except Exception as re:
                     pass
                 last_err = je
@@ -322,7 +342,8 @@ def call_openrouter_text(prompt: str, model: str, fallbacks: list = None, temper
             "messages": [{"role": "user", "content": prompt}],
             "temperature": temperature,
         }
-        result, err = _post_with_retry(payload, headers, timeout=30, label=model_name)
+        # Increased timeout to 120s for reasoning models
+        result, err = _post_with_retry(payload, headers, timeout=120, label=model_name)
         if result is not None:
             return result
         last_err = err

@@ -90,6 +90,10 @@ def parse_json_response(text: str) -> dict:
     first_brace = text.find("{")
     if first_brace > 0:
         text = text[first_brace:]
+    # If the text appears to be multiple objects without an array, wrap it
+    if text.strip().startswith("{") and "}," in text.strip() and not text.strip().startswith("["):
+        text = f"[{text.strip()}]"
+        
     try:
         return json.loads(text)
     except Exception:
@@ -121,7 +125,7 @@ def parse_json_response(text: str) -> dict:
                         pass
                     break
 
-    m = re.search(r"\{.*\}", text, re.DOTALL)
+    m = re.search(r"\[.*\]|\{.*\}", text, re.DOTALL)
     if not m:
         raise ValueError(f"No JSON object found in:\n{text[:500]}")
     try:
@@ -199,6 +203,10 @@ Hooks & Energy Peaks of the BGM:
     if video_info.get("is_image"):
         return f"""You are a master short-form video editor. Analyze this static photo for a viral social reel.
 {directives_note}{audio_note}
+
+CRITICAL INSTRUCTION FOR REASONING AND THINKING:
+Keep your internal thinking process (the reasoning path before outputting JSON) extremely short, concise, and direct (maximum 3-4 sentences total). Do not write long explanations, nested logic, or repetitive drafts. Summarize your thoughts immediately and output the final JSON object.
+
 Return ONLY valid JSON. No markdown, no code fences, no extra text.
 
 {{
@@ -480,37 +488,40 @@ Editor Read: {(seg.get("editor_reasoning") or "")[:220] or "N/A"}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BEAT TIMELINE SLOTS (CRITICAL)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-The background music has been analyzed. The video MUST be cut precisely to these beat windows:
+The background music has been analyzed. The video MUST be cut precisely to these exact beat windows. You must assign the *best* segment of video (or image) to each beat window so that the visual action perfectly fills the time 'till that beat goes'.
 {chr(10).join(beat_lines)}
 
 You MUST assign a specific clip from the inventory to EACH beat window.
 CRITICAL RULE 1: Alternate sources. DO NOT assign two consecutive windows to clips from the same SOURCE video or image.
 CRITICAL RULE 2: Match mood/duration to the window.
+CRITICAL RULE 3: Media Type Matching. 
+  - If a beat window is very small/fast (e.g., duration < 0.5s), you MUST prioritize using an image ('Static Photo') for that slot to create rapid photo flashes. However, if no images are available in the inventory, fallback to using a 'Video' segment.
+  - If a beat window is longer (e.g., duration >= 0.5s), you MUST prioritize using a 'Video' segment so motion can breathe.
+CRITICAL RULE 4: Dynamic Speed (Slow-mo / Fast-forward).
+  - You can optionally set a "speed" multiplier for each beat assignment to slow down or speed up the clip to fit the beat's energy.
+  - Use "speed": 1.0 for normal playback.
+  - Use "speed": 0.5 for dramatic slow-motion (great for emotional peaks or very fast action).
+  - Use "speed": 1.5 or 2.0 for fast-forward (great for long travel sequences to match high-tempo music).
 """
-        json_schema = """
-{{
+        json_schema = f"""{{
   "removed_clips": [
     {{
       "clip": 3,
       "reason": "visually repetitive"
     }}
   ],
-  "full_story": "2-3 sentence cinematic description...",
+  "reasoning": "Explain your story arc and pacing choices briefly.",
   "beat_assignments": [
     {{
       "window_index": 0,
       "clip_index": 5,
-      "reason": "This clip has a strong approach that fits the 1.5s opening window."
-    }},
-    {{
-      "window_index": 1,
-      "clip_index": 2,
-      "reason": "Switching to a different source for contrast on the next beat."
+      "speed": 1.0,
+      "camera_movement": "none",
+      "reason": "Starts the vlog with an establishing shot"
     }}
   ],
-  "transitions": ["zoom_in"],
-  "transition_durations": [0.3],
-  "reasoning": "Explain why the hook works and transitions...",
+  "transitions": ["fade", "dissolve", "cut", "slide_left"],
+  "transition_durations": [0.5, 0.4, 0.05, 0.6],
   "audio_reasoning": "Explain how the clip sequence specifically aligns with the music."
 }}
 """
@@ -552,13 +563,41 @@ CRITICAL RULE 2: Match mood/duration to the window.
         directives_note = f"\nUSER EDITING DIRECTIVES (YOU MUST FOLLOW THESE INSTRUCTIONS):\n{directives}\n"
         directives_reminder = f"\n- CRITICAL: YOU MUST STRICTLY FOLLOW THESE USER EDITING DIRECTIVES:\n{directives}\n"
         loc_grouping_note = "Once all clips for one location finish playing, you move to the next location. Never go back to a previously finished location, EXCEPT when doing so is necessary to satisfy the USER EDITING DIRECTIVES (for instance, if the user explicitly asks to start and end with a plane/flight, or return to a location)."
-
     focus_constraint = build_focus_constraint(focus)
+    
+    critical_rules = ""
+    if beat_windows:
+        critical_rules = f"""CRITICAL RULES:
+- beat_assignments MUST be an array of exactly {len(beat_windows)} assignments.
+- You MUST assign a specific clip from the inventory to EACH beat window.
+- transitions and transition_durations MUST be of length ({len(beat_windows)} - 1).
+- Apply a transition on EVERY beat. Use fluid transitions (dissolve, zoom_in) OR use 'cut' if the scene completely changes. 
+- IF YOU USE 'cut', its corresponding transition_duration MUST BE EXACTLY 0.05. For fluid transitions, use 0.3 to 0.6.
+- Use `speed: 0.5` aggressively for epic slowmo when the clip content is highly interesting.
+- Set `camera_movement` to apply dynamic zooms based on context.
+- removed_clips MUST NOT appear in beat_assignments.
+- NO DUPLICATE CLIPS: Every beat window MUST use a unique, distinct clip. Do NOT reuse the same clip index twice!
+- STRICT VLOG CHRONOLOGY: Progress chronologically. Connect the dots properly (e.g., Car -> Walking -> Swimming). 
+- NO TIME TRAVEL: Once you leave a scene/location, you MUST NOT return to it. The story must progress strictly forward without jumping back and forth!
+- STRICT LOCATION GROUPING: Unless explicitly requested by the user's directives, you MUST group clips from the same physical location/scene together contiguously."""
+    else:
+        critical_rules = f"""CRITICAL RULES:
+- order and roles MUST be same length
+- transitions and transition_durations MUST be of length (len(order) - 1)
+- Choose mostly FLUID, organic transitions. Avoid wipes and slides.
+- no duplicate clips in order
+- removed_clips MUST NOT appear in order
+- You MUST include ALL clips in 'order' that you did not explicitly remove in 'removed_clips'. Do NOT drop clips silently.
+- CLIP COUNT CHECK: There are {len(segments)} clips. Your 'order' array MUST contain exactly {len(segments)} minus len(removed_clips) indices.
+- STRICT VLOG CHRONOLOGY: Progress chronologically. Connect the dots properly (e.g., Car -> Walking -> Swimming).
+- NO TIME TRAVEL: Once you leave a scene/location, you MUST NOT return to it. The story must progress strictly forward without jumping back and forth!
+- STRICT LOCATION GROUPING: Unless explicitly requested by the user's directives, you MUST group clips from the same physical location/scene together contiguously."""
 
     if directives:
         return f"""
 You are an elite cinematic short-form video editor.
 {directives_note}{audio_note}
+{beat_windows_note}
 {focus_constraint}
 
 CRITICAL INSTRUCTION FOR REASONING AND THINKING:
@@ -623,15 +662,7 @@ No code fences.
 
 {json_schema}
 
-CRITICAL RULES:
-- order and roles MUST be same length
-- transitions and transition_durations MUST be of length (len(order) - 1)
-- Choose mostly FLUID, organic transitions (fade, dissolve, zoom_dissolve, zoom_in, cut). Avoid wipes and slides unless representing continuous high-action sports footage (like pool action or ping pong play).
-- no duplicate clips in order
-- removed_clips MUST NOT appear in order
-- You MUST include ALL clips in 'order' that you did not explicitly remove in 'removed_clips'. Do NOT drop clips silently.
-- CLIP COUNT CHECK: There are {len(segments)} clips (indices 0 to {len(segments)-1}). Your 'order' array MUST contain exactly {len(segments)} minus len(removed_clips) indices.
-- STRICT LOCATION GROUPING: Unless explicitly requested by the user's directives, you MUST group clips from the same physical location/scene together contiguously. Do NOT alternate or interleave locations. Once a location is shown, all clips from that location must finish playing before moving to the next.
+{critical_rules}
 - CRITICAL: YOU MUST STRICTLY FOLLOW THESE USER EDITING DIRECTIVES:
 {directives}
 
@@ -641,6 +672,7 @@ CRITICAL REASONING CONSTRAINT: Your thinking block (<think>...</think>) MUST be 
     return f"""
 You are an elite cinematic short-form video editor.
 {directives_note}{audio_note}
+{beat_windows_note}
 CRITICAL INSTRUCTION FOR REASONING AND THINKING:
 Keep your internal thinking process (the reasoning path before outputting JSON) extremely short, concise, and direct (maximum 3-4 sentences total). Do not write long explanations, nested logic, or repetitive drafts. Summarize your thoughts immediately and output the final JSON object.
 
@@ -823,18 +855,34 @@ No code fences.
 
 {json_schema}
 
-CRITICAL RULES:
-- order and roles MUST be same length
-- transitions and transition_durations MUST be of length (len(order) - 1)
-- Choose mostly FLUID, organic transitions (fade, dissolve, zoom_dissolve, zoom_in, cut). Avoid wipes and slides unless representing continuous high-action sports footage (like pool action or ping pong play).
-- no duplicate clips in order
-- removed_clips MUST NOT appear in order
-- You MUST include ALL clips in 'order' that you did not explicitly remove in 'removed_clips'. Do NOT drop clips silently.
-- CLIP COUNT CHECK: There are {len(segments)} clips (indices 0 to {len(segments)-1}). Your 'order' array MUST contain exactly {len(segments)} minus len(removed_clips) indices. If you have 12 clips and removed 0, 'order' MUST have 12 entries.
+{critical_rules}
 - prioritize emotion over chronology
 - prioritize pacing over documentation
 - prioritize cinematic storytelling over logical sequencing
 {directives_reminder}
 {focus_constraint}
 CRITICAL REASONING CONSTRAINT: Your thinking block (<think>...</think>) MUST be under 100 tokens. Summarize in 3 sentences max, then immediately output the JSON.
+"""
+def build_candidate_scoring_prompt(candidates: list, directives: str = "") -> str:
+    directives_note = ""
+    if directives:
+        directives_note = f"\nUSER EDITING DIRECTIVES (MUST FOLLOW):\n{directives}\n"
+    
+    return f"""You are a master short-form video editor. I am providing you with thumbnails for several short candidate video segments.
+Each thumbnail is labeled with its segment_id.
+{directives_note}
+Please score each candidate segment on its aesthetic quality and semantic content.
+
+CRITICAL: Return ONLY valid JSON. No markdown, no code fences.
+
+[
+  {{
+    "segment_id": "string (MUST match the input)",
+    "aesthetic_score": 0-10 (integer),
+    "subject_clarity": 0-10 (integer, is there a clear subject?),
+    "emotion_tag": "happy|calm|intense|neutral",
+    "scene_type": "closeup|wide|action|landscape|portrait|mixed",
+    "caption": "short 3-5 word description"
+  }}
+]
 """

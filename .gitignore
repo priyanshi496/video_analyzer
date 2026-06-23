@@ -33,3 +33,23 @@ beat_sync/music/*.aac
 beat_sync/music/*.flac
 beat_sync/music/*.ogg
 beat_sync/music/*.m4a
+
+# Audio Analysis & ML outputs
+demucs_output/
+htdemucs/
+*beats_visualization*.png
+
+# Ignore ALL Audio and Video Files
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*.mpeg
+*.mpg
+*.mp3
+*.wav
+*.aac
+*.flac
+*.ogg
+*.m4a

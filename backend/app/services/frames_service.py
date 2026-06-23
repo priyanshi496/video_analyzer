@@ -141,3 +141,27 @@ def is_likely_black_clip(frame_meta: list) -> bool:
     threshold = 20
     avg = sum(f.get("mean_brightness", 255) for f in frame_meta) / len(frame_meta)
     return avg < threshold
+
+def extract_frame_at_time(video_path: str, timestamp_sec: float) -> str:
+    """Extracts a single frame at the given timestamp and returns its temp path."""
+    import subprocess
+    import tempfile
+    from pathlib import Path
+    import uuid
+    
+    tmpdir = Path(tempfile.gettempdir())
+    out_path = tmpdir / f"thumb_{uuid.uuid4().hex[:8]}.jpg"
+    
+    cmd = [
+        "ffmpeg", "-y", "-ss", str(timestamp_sec), "-i", video_path,
+        "-vframes", "1", "-q:v", "2", str(out_path)
+    ]
+    
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if out_path.exists():
+            return str(out_path)
+    except Exception as e:
+        logger.error(f"Failed to extract frame at {timestamp_sec}s from {video_path}: {e}")
+        
+    return ""

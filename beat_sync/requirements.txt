@@ -1,6 +1,7 @@
 # beat_sync dependencies
 # Install with: pip install -r beat_sync/requirements.txt
 
-librosa>=0.10.1
+Cython>=3.0
+madmom>=0.16.1
 soundfile>=0.12.1
-numpy>=1.24.0
+numpy<1.24.0

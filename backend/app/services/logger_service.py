@@ -156,6 +156,19 @@ def write_run_summary(
     object_key = f"logs/{run_id}/SUMMARY.md"
 
     divider = "═" * 80
+    if isinstance(story_parsed, dict):
+        story_order = story_parsed.get('order')
+        story_reasoning = story_parsed.get('reasoning', 'N/A')
+        audio_reasoning = story_parsed.get('audio_reasoning', 'N/A')
+    elif isinstance(story_parsed, list):
+        story_order = story_parsed
+        story_reasoning = 'N/A'
+        audio_reasoning = 'N/A'
+    else:
+        story_order = None
+        story_reasoning = 'N/A'
+        audio_reasoning = 'N/A'
+
     lines = [
         divider,
         "  PIPELINE RUN SUMMARY",
@@ -165,9 +178,9 @@ def write_run_summary(
         "",
         f"Videos analyzed: {len(all_results)}",
         f"Best segments selected: {len(final_segments)}",
-        f"Story order: {story_parsed.get('order') if story_parsed else None}",
-        f"Story reasoning: {story_parsed.get('reasoning') if story_parsed else 'N/A'}",
-        f"Audio reasoning: {story_parsed.get('audio_reasoning') if story_parsed else 'N/A'}",
+        f"Story order: {story_order}",
+        f"Story reasoning: {story_reasoning}",
+        f"Audio reasoning: {audio_reasoning}",
         "",
     ]
 
