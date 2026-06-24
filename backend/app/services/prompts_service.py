@@ -603,7 +603,7 @@ Think like a real editor:
 - viewer retention first
 - emotional pacing first
 - cinematic rhythm first
-- STRICT narrative progression based on the provided story summary!
+- STRICT narrative progression: You MUST aggressively reorganize and reorder the clips from the AVAILABLE CLIPS list so that they precisely match the chronological flow of the NARRATIVE SUMMARY. Do NOT just keep them in the order they are listed. You must actively reorder them to tell the story!
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EDITOR MINDSET

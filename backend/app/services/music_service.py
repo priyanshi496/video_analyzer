@@ -211,8 +211,7 @@ def pick_ai_music(vibe: str, final_segs: list, tmpdir: str) -> str:
     
     logger.info(f"AI Music Selection: vibe={vibe}, vibe_target_energy={vibe_target_energy}, text_adj={scaled_adj}, final_target_energy={target_energy}")
     
-    best_song = None
-    best_score = -9999
+    scored_songs = []
     
     for song in catalog:
         score = 0
@@ -240,9 +239,18 @@ def pick_ai_music(vibe: str, final_segs: list, tmpdir: str) -> str:
         elif song_mood == "chill" and any(w in full_text for w in ["chill", "relax", "calm", "slow", "peaceful"]):
             score += 5
             
-        if score > best_score:
-            best_score = score
-            best_song = song
+        scored_songs.append((score, song))
+            
+    if not scored_songs:
+        return ""
+        
+    import random
+    best_score = max(score for score, song in scored_songs)
+    
+    # Collect all songs that are tied for the top score, or within 1 point to add variety
+    top_contenders = [song for score, song in scored_songs if score >= best_score - 1]
+    
+    best_song = random.choice(top_contenders)
             
     if best_song:
         logger.info(f"AI picked song: {best_song['track']} by {best_song['artist']} with score {best_score} (slug: {best_song['slug']})")
