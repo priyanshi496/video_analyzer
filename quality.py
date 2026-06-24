@@ -181,8 +181,8 @@ def analyze_video_quality(video_path: str, sample_interval_sec: float = 0.5):
     for s in samples:
         s["blur_norm"]   = round(s["blur_raw"]  / max_blur  * 10, 1)
         s["shake_norm"]  = round(s["shake_raw"] / max_shake * 10, 1)
-        s["is_shaky"]    = s["shake_raw"] > shake_thresh
-        s["is_blurry"]   = s["blur_raw"]  < blur_thresh
+        s["is_shaky"]    = bool(s["shake_raw"] > shake_thresh)
+        s["is_blurry"]   = bool(s["blur_raw"]  < blur_thresh)
         s["motion_type"] = classify_motion_type(
             s["_flow_x"], s["_flow_y"],
             s["_pfx"] if s["_pfx"] is not None else s["_flow_x"],

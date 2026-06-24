@@ -104,6 +104,7 @@ def get_video_info(path: str) -> Optional[dict]:
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.release()
 
+    creation_time = meta.get("format", {}).get("tags", {}).get("creation_time")
     return {
         "path":         path,
         "duration_sec": duration,
@@ -111,6 +112,7 @@ def get_video_info(path: str) -> Optional[dict]:
         "height":       int(vs.get("height", 0)),
         "fps":          fps,
         "total_frames": total_frames,
+        "creation_time": creation_time,
     }
 
 
@@ -824,6 +826,7 @@ def process_single_video(
         "frame_meta":   all_frame_meta,
         "analysis":     parsed,
         "n_chunks":     len(chunk_analyses),
+        "creation_time": info.get("creation_time"),
     }
 
     with CACHE_LOCK:
@@ -848,6 +851,27 @@ def run_full_analysis(
     Run process_single_video for all videos in parallel, then build final
     ordered best_segments list with story ordering.
     """
+    def extract_whatsapp_timestamp(filepath: str):
+        import re
+        from datetime import datetime
+        filename = Path(filepath).name
+        # Match: WhatsApp Video 2026-06-19 at 16.10.26.mp4 or WhatsApp Image 2026-06-19 at 16.10.26.jpeg
+        match = re.search(r'(\d{4}-\d{2}-\d{2})\s+at\s+(\d{2})\.(\d{2})\.(\d{2})', filename)
+        if match:
+            date_str, hh, mm, ss = match.groups()
+            try:
+                return datetime.strptime(f"{date_str} {hh}:{mm}:{ss}", "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                pass
+        # Try just matching date
+        match_date = re.search(r'(\d{4}-\d{2}-\d{2})', filename)
+        if match_date:
+            try:
+                return datetime.strptime(match_date.group(1), "%Y-%m-%d")
+            except Exception:
+                pass
+        return None
+
     pipeline_start_time = time.time()
     init_run_log_dir()
 
@@ -908,6 +932,7 @@ def run_full_analysis(
                 "primary_subjects":   seg.get("primary_subjects", []),
                 "what_happens":       seg.get("what_happens", ""),
                 "mood":               seg.get("mood", ""),
+                "creation_time":      result.get("creation_time"),
             }
             constructed_seg["ai_score"] = calculate_alignment_score(constructed_seg, directives)
             best_segments.append(constructed_seg)
@@ -1089,19 +1114,23 @@ def run_full_analysis(
             key=lambda s: (int(s.get("video_idx", 0)), float(s.get("start_sec", 0.0)))
         )
     else:
-        TIME_ORDER = {
-            "dawn": 0, "morning": 1, "afternoon": 2, "day": 2, "midday": 2,
-            "golden_hour": 3, "sunset": 3, "dusk": 4, "evening": 4, "night": 5, "unknown": 6
-        }
-        def sort_by_temporal_flow(segments):
-            return sorted(
-                segments,
-                key=lambda s: (
-                    TIME_ORDER.get(s.get("time_of_day", "unknown"), 6),
-                    int(s.get("priority", 999) or 999)
-                )
-            )
-        survived = sort_by_temporal_flow(survived)
+        logging.info("  📂 Sorting clips chronologically by filename timestamps...")
+        def sort_by_timestamp_and_idx(segments):
+            def get_sort_key(s):
+                ts = extract_whatsapp_timestamp(s["video_path"])
+                if ts:
+                    return (ts, int(s.get("video_idx", 0)), float(s.get("start_sec", 0.0)))
+                else:
+                    from datetime import datetime
+                    TIME_ORDER = {
+                        "dawn": 0, "morning": 1, "afternoon": 2, "day": 2, "midday": 2,
+                        "golden_hour": 3, "sunset": 3, "dusk": 4, "evening": 4, "night": 5, "unknown": 6
+                    }
+                    fallback_time_val = TIME_ORDER.get(s.get("time_of_day", "unknown"), 6)
+                    dummy_ts = datetime.combine(datetime.min.date(), datetime.min.time().replace(hour=fallback_time_val))
+                    return (dummy_ts, int(s.get("video_idx", 0)), float(s.get("start_sec", 0.0)))
+            return sorted(segments, key=get_sort_key)
+        survived = sort_by_timestamp_and_idx(survived)
 
     # ── Story ordering (run only on survived clips) ─────────────────────────
     story_order = list(range(len(survived)))

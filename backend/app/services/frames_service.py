@@ -14,17 +14,9 @@ FRAMES_DIR = Path("timeline_frames")
 FRAMES_DIR.mkdir(exist_ok=True)
 
 def pick_frame_count(duration_sec: float) -> int:
-    af = {
-        "short":  6,
-        "medium": 6,
-        "long":   6,
-    }
-    if duration_sec < 15:
-        return af["short"]
-    elif duration_sec < 45:
-        return af["medium"]
-    else:
-        return af["long"]
+    # Dynamically extract ~1 frame per 10 seconds of video (minimum 2 frames)
+    count = round(duration_sec / 10.0)
+    return max(2, count)
 
 
 def extract_representative_frames(
@@ -141,3 +133,56 @@ def is_likely_black_clip(frame_meta: list) -> bool:
     threshold = 20
     avg = sum(f.get("mean_brightness", 255) for f in frame_meta) / len(frame_meta)
     return avg < threshold
+
+
+def extract_thumbnail(video_path: str, output_dir: str, max_size: int = 768) -> str:
+    """
+    Extracts a single representative thumbnail for a video or image.
+    For videos, it seeks to t=1.0s (or t=0.5s if too short).
+    For images, it just resizes and saves it.
+    Returns the absolute path to the extracted JPEG.
+    """
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = Path(video_path).stem
+    out_path = out_dir / f"{stem}_thumb.jpg"
+    
+    is_image = Path(video_path).suffix.lower() in (".jpg", ".jpeg", ".png", ".heic")
+    
+    if is_image:
+        frame = cv2.imread(video_path)
+        if frame is None:
+            logging.warning(f"  ✗ Could not read image for thumbnail: {video_path}")
+            return ""
+    else:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            logging.warning(f"  ✗ Could not open video for thumbnail: {video_path}")
+            return ""
+        
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration = total_frames / fps if fps > 0 else 0
+        
+        target_sec = 1.0 if duration > 1.0 else (duration / 2.0)
+        frame_idx = min(int(target_sec * fps), total_frames - 1)
+        
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = cap.read()
+        cap.release()
+        
+        if not ret or frame is None:
+            logging.warning(f"  ✗ Could not read frame at {target_sec}s for thumbnail: {video_path}")
+            return ""
+
+    h, w = frame.shape[:2]
+    if max(h, w) > max_size:
+        scale = max_size / max(h, w)
+        frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+
+    success = cv2.imwrite(str(out_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    if not success:
+        logging.error(f"  ✗ Failed to write thumbnail to {out_path}!")
+        return ""
+        
+    return str(out_path.absolute())

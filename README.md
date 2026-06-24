@@ -33,10 +33,17 @@ An intelligent video processing pipeline and web editor that automatically analy
 *   **Caption Scopes**: Supports per-clip captions or a single global caption placed at the top of the reel.
 *   **Subtitles & Subsecond Trimming**: Automatically generates synced `.srt` files and handles subsecond trims, normalizing audio outputs to a standard `-14 LUFS` loudness.
 
+### ⚡ Dynamic Density Beat-Sync Engine
+*   **Activity Curve Pacing**: Computes a time-varying activity curve from RMS energy, onset density, spectral flux, and structural novelty.
+*   **Adaptive Cut Budgeting**: Dynamically budgets video cut density based on the average song activity (e.g., ~15-20 cuts for slow tracks, ~35-50 cuts for fast tracks).
+*   **Phrase Grouping**: Applies rolling 1.0-second grouping windows to resolve redundant transients, ensuring clean edits while preserving drops/structural boundaries.
+*   **Dynamic BPM Gap Pacing**: Automatically scales cut intervals using the tempo (BPM) and localized activity factor, preventing "machine-gun" edits.
+
 ### 🖥️ Cinematic Editor UI
 *   **Waitress Web Server**: Serves a premium cinematic dark-themed web interface powered by a production Waitress WSGI server.
 *   **Interactive Filmstrip**: Truncate/extend segments in a visual timeline, perform manual segment additions, drag-and-drop elements, preview audio/videos, and stream real-time logs.
 *   **Remotion Integration**: Integrates directly with a React-based **Remotion Composer** to apply transitions (cuts, fades, dissolves, zoom ins/outs) and hot-sync edits instantly into a unified movie config (`my_reel.json`).
+
 
 ---
 
@@ -59,6 +66,7 @@ An intelligent video processing pipeline and web editor that automatically analy
 *   [llm.py](file:///Users/priyanshimodi/Documents/projects/TSC/video_analyzer/llm.py): Handles multithreaded requests to NVIDIA NIM & OpenRouter.
 *   [config.py](file:///Users/priyanshimodi/Documents/projects/TSC/video_analyzer/config.py): Configures models, fallbacks, rate limits, and thresholds.
 *   [OpenMontage/generate_reel.py](file:///Users/priyanshimodi/Documents/projects/TSC/video_analyzer/OpenMontage/generate_reel.py): Coordinates the generation of assets (audio BGM, voiceovers, subtitle SRTs) and compiles the final cinematic reel via Remotion/FFmpeg.
+*   [backend/beat_sync_test.py](file:///Users/priyanshimodi/Documents/projects/TSC/video_analyzer/backend/beat_sync_test.py): Standalone, highly optimized beat-sync video generator utilizing the Dynamic Density Engine.
 *   [editor_ui/](file:///Users/priyanshimodi/Documents/projects/TSC/video_analyzer/editor_ui):
     *   [app.py](file:///Users/priyanshimodi/Documents/projects/TSC/video_analyzer/editor_ui/app.py): Flask routes, API endpoints, manual segment triggers, and hot-syncing.
     *   [templates/editor.html](file:///Users/priyanshimodi/Documents/projects/TSC/video_analyzer/editor_ui/templates/editor.html): Dark-themed timeline editor.
@@ -87,8 +95,17 @@ An intelligent video processing pipeline and web editor that automatically analy
 
 ## 💻 How to Run
 
+### Running the Highlight Editor UI
 Launch the application:
 ```bash
 python main.py
 ```
 Open `http://127.0.0.1:5050` in your web browser. Upload videos in `input_videos`, run the AI analyzer to generate timeline segments, apply post-processing adjustments (music, captions, transitions), and render the final highlight reel!
+
+### Running the Beat-Sync Pacing Tester
+To run the standalone beat-sync engine on any custom audio track and folder of clips:
+```bash
+cd backend
+python beat_sync_test.py --audio path/to/song.mp3 --clips_dir path/to/clips_folder --output output_reel.mp4 --sensitivity medium
+```
+It will automatically generate the synchronized video `output_reel.mp4` and save a DAW-style color-coded waveform cuts visualization chart as `output_reel_waveform.png`.
