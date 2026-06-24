@@ -158,9 +158,7 @@ async def get_job_status(
 
 from typing import List, Dict, Optional
 class ConfirmStoryRequest(BaseModel):
-    story_summary: Optional[str] = None
-    asset_order: List[int]
-    asset_phases: Dict[str, str]
+    rewrite_instructions: Optional[str] = None
 
 @router.post("/jobs/{job_id}/confirm-story", response_model=JobStatusResponse)
 async def confirm_story_context(
@@ -182,11 +180,24 @@ async def confirm_story_context(
         if job.status != JobStatus.STORY_PROPOSED:
             raise HTTPException(status_code=400, detail=f"Job status must be STORY_PROPOSED to confirm story, current status is {job.status}")
 
-        # Save the confirmed story and order (only update summary if explicitly provided and not default swagger)
-        if request.story_summary and request.story_summary.strip() != "string":
-            job.story_summary = request.story_summary
-        job.confirmed_asset_order = request.asset_order
-        job.asset_phases = request.asset_phases
+        # 1. Update Story Summary
+        final_asset_order = job.proposed_asset_order
+        if request.rewrite_instructions and request.rewrite_instructions.strip() not in ["", "string"]:
+            from app.services.llm_service import rewrite_story_summary
+            import logging
+            logging.info(f"Rewriting story based on user instructions: {request.rewrite_instructions}")
+            new_summary = rewrite_story_summary(job.story_summary, request.rewrite_instructions)
+            job.story_summary = new_summary
+            
+            # CRITICAL: The old proposed asset order is now stale and contradicts the new story!
+            # We must nullify it so Phase 2 does NOT pre-sort the clips incorrectly based on the old story.
+            final_asset_order = []
+
+        # 2. Update or Fallback Array Fields
+        final_asset_phases = job.asset_phases
+
+        job.confirmed_asset_order = final_asset_order
+        job.asset_phases = final_asset_phases
         job.status = JobStatus.RUNNING
         job.progress = 25
         await db.commit()
@@ -195,9 +206,9 @@ async def confirm_story_context(
         # Trigger Celery Task Phase 2
         continue_video_analysis.delay(
             job_id=str(job.id),
-            confirmed_order=request.asset_order,
+            confirmed_order=final_asset_order,
             confirmed_summary=job.story_summary,  # Pass the safe DB value, not the raw request
-            confirmed_phases=request.asset_phases,
+            confirmed_phases=final_asset_phases,
             music_config=job.music_config
         )
 
