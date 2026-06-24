@@ -1467,6 +1467,13 @@ def run_full_analysis(
             roles = parsed_order.get("roles", [])
             llm_transitions = parsed_order.get("transitions", [])
             llm_durations = parsed_order.get("transition_durations", [])
+            
+            removed_clips_data = parsed_order.get("removed_clips", [])
+            explicitly_removed = set()
+            for r in removed_clips_data:
+                idx = r.get("clip")
+                if isinstance(idx, int):
+                    explicitly_removed.add(idx)
 
             # ── Lenient validation: accept valid subset, append missing indices ──
             n = len(survived)
@@ -1493,8 +1500,8 @@ def run_full_analysis(
                 else:
                     logging.info(f"  ⚠️  Story order: dropping invalid/duplicate index {idx_or_group}")
 
-            # Append any clips the LLM forgot to include
-            missing = [i for i in range(n) if i not in seen]
+            # Append any clips the LLM forgot to include (that weren't explicitly removed)
+            missing = [i for i in range(n) if i not in seen and i not in explicitly_removed]
             if missing:
                 logging.info(f"  ⚠️  Story order: LLM missed indices {missing} — appending them at end")
                 for idx in missing:

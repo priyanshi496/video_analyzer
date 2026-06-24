@@ -156,8 +156,9 @@ async def get_job_status(
         err = traceback.format_exc()
         raise HTTPException(status_code=500, detail=str(err))
 
+from typing import List, Dict, Optional
 class ConfirmStoryRequest(BaseModel):
-    story_summary: str
+    story_summary: Optional[str] = None
     asset_order: List[int]
     asset_phases: Dict[str, str]
 
@@ -181,8 +182,9 @@ async def confirm_story_context(
         if job.status != JobStatus.STORY_PROPOSED:
             raise HTTPException(status_code=400, detail=f"Job status must be STORY_PROPOSED to confirm story, current status is {job.status}")
 
-        # Save the confirmed story and order
-        job.story_summary = request.story_summary
+        # Save the confirmed story and order (only update summary if explicitly provided and not default swagger)
+        if request.story_summary and request.story_summary.strip() != "string":
+            job.story_summary = request.story_summary
         job.confirmed_asset_order = request.asset_order
         job.asset_phases = request.asset_phases
         job.status = JobStatus.RUNNING
@@ -194,7 +196,7 @@ async def confirm_story_context(
         continue_video_analysis.delay(
             job_id=str(job.id),
             confirmed_order=request.asset_order,
-            confirmed_summary=request.story_summary,
+            confirmed_summary=job.story_summary,  # Pass the safe DB value, not the raw request
             confirmed_phases=request.asset_phases,
             music_config=job.music_config
         )
