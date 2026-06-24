@@ -37,13 +37,15 @@ from app.services.stitch_service import get_video_dimensions, get_video_rotation
 CONFIG = {
     "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
     "fallback_models": [
-        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-        "google/gemma-4-31b-it:free",
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
     ],
     "max_tokens_vision": 4096,
     "max_tokens_text":   1000,
     "story_order_model":    "openai/gpt-oss-120b:free",
-    "story_order_fallback": "meta-llama/llama-3-8b-instruct:free",
+    "story_order_fallback": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    # Two-step story context: vision analysis + narrative writing
+    "story_vision_model":    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",  # Step 1: NVIDIA NIM multiimage
+    "story_narrative_model": "openrouter/owl-alpha",                            # Step 2: OpenRouter text
     "max_parallel_vision_calls": 3,
     "image_limit_per_request": 8,
     "max_reference_images": None,
@@ -128,6 +130,7 @@ def get_video_info(path: str) -> Optional[dict]:
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.release()
 
+    creation_time = meta.get("format", {}).get("tags", {}).get("creation_time")
     return {
         "path":         path,
         "duration_sec": duration,
@@ -135,6 +138,7 @@ def get_video_info(path: str) -> Optional[dict]:
         "height":       int(vs.get("height", 0)),
         "fps":          fps,
         "total_frames": total_frames,
+        "creation_time": creation_time,
     }
 
 
@@ -211,11 +215,9 @@ def make_fallback_analysis(
         "video_summary":     summary,
         "camera_rotation":   0,
         "detected_scenario": "D",
-        "overall_mood": "unknown", "overall_vibe": "unknown",
         "key_moments":    [{"timestamp_sec": start, "description": "Quality-guided fallback window"}],
         "segments":       [{"start_sec": start, "end_sec": end, "what_happens": "Quality-guided fallback",
-                            "mood": "unknown", "energy": 5, "visual_quality": 7,
-                            "instagrammable": 7, "story_value": 5, "keep": True,
+                            "keep": True,
                             "reason": reason}],
         "best_segments":  [{"start_sec": start, "end_sec": end,
                             "reason": reason,
@@ -832,13 +834,19 @@ def process_single_video(
     video_quality_map: dict,
     reference_paths: list,
     directives: str = "",
+    journey_phase: str = None,
 ) -> dict:
     # Check cache first thread-safely
     with CACHE_LOCK:
         cache = load_cache()
     
+    actual_directives = directives
+    if journey_phase:
+        phase_directive = f"STORY CONTEXT: This asset belongs to the '{journey_phase}' phase of the story. Please label segments accordingly."
+        actual_directives = f"{directives}\n{phase_directive}" if directives else phase_directive
+
     # Incorporate normalized directives into cache key to avoid cache collisions
-    norm_directives = " ".join(directives.lower().split()) if directives else ""
+    norm_directives = " ".join(actual_directives.lower().split()) if actual_directives else ""
     cache_key = f"{info['path']}_{info['duration_sec']}_{norm_directives}"
     if cache_key in cache:
         cached_val = cache[cache_key]
@@ -899,7 +907,7 @@ def process_single_video(
 
     if dur <= chunk_window:
         fm, parsed     = analyze_window(info, 0.0, dur, api_key, video_quality_map,
-                                        reference_paths=reference_paths, directives=directives)
+                                        reference_paths=reference_paths, directives=actual_directives)
         parsed         = auto_recover_segments(parsed)
         all_frame_meta = fm
         chunk_analyses = [parsed]
@@ -918,7 +926,7 @@ def process_single_video(
             label = f"chunk{ci:02d}"
             logging.info(f"   Chunk {ci+1}/{len(starts)}: [{start:.1f}s–{start+window:.1f}s]")
             fm, parsed = analyze_window(info, start, window, api_key, video_quality_map,
-                                        chunk_label=label, reference_paths=reference_paths, directives=directives)
+                                        chunk_label=label, reference_paths=reference_paths, directives=actual_directives)
             parsed = auto_recover_segments(parsed)
             parsed = offset_segments(parsed, start)
             all_frame_meta += fm
@@ -949,6 +957,7 @@ def process_single_video(
         "frame_meta":   all_frame_meta,
         "analysis":     parsed,
         "n_chunks":     len(chunk_analyses),
+        "creation_time": info.get("creation_time"),
     }
 
     with CACHE_LOCK:
@@ -961,6 +970,129 @@ def process_single_video(
 
 # ── Full Analysis Orchestrator ─────────────────────────────────────────────────
 
+def run_story_context_analysis(video_infos: list, vibe: str, directives: str, tmpdir: str) -> dict:
+    """
+    Two-step story context pipeline:
+      Step 1 — Nemotron (NVIDIA NIM, multiimage): Analyzes each thumbnail visually.
+               Returns per-asset descriptions (setting, subjects, activity, tone, trip_phase).
+      Step 2 — owl-alpha (OpenRouter, text only): Takes those descriptions and writes
+               a rich personal narrative + determines chronological asset_order + phases.
+    """
+    from app.services.frames_service import extract_thumbnail
+    from app.services.prompts_service import build_story_vision_prompt, build_story_narrative_prompt
+    from app.services.llm_service import call_openrouter_multiimage, call_openrouter_text
+
+    asset_summaries = []
+    MAX_THUMBNAILS = 8
+
+    for idx, info in enumerate(video_infos):
+        if idx >= MAX_THUMBNAILS:
+            logging.info(f"  ⏭  Skipping story context for asset {idx} (max {MAX_THUMBNAILS} thumbnails).")
+            break
+
+        thumb_path = extract_thumbnail(info["path"], tmpdir)
+        if thumb_path:
+            asset_summaries.append({
+                "index": idx,
+                "filename": Path(info["path"]).name,
+                "thumbnail_path": thumb_path
+            })
+
+    if not asset_summaries:
+        logging.warning("  ⚠️  Failed to extract any thumbnails for story context.")
+        return None
+
+    num_assets = len(asset_summaries)
+    image_paths = [a["thumbnail_path"] for a in asset_summaries]
+
+    # ── STEP 1: Nemotron (NVIDIA NIM) — Visual Analysis ───────────────────────
+    vision_model = CONFIG.get("story_vision_model", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
+    vision_prompt = build_story_vision_prompt(asset_summaries)
+    logging.info(f"  🔍 [Story Step 1/2] Sending {num_assets} thumbnails to {vision_model} for visual analysis...")
+
+    asset_descriptions = []
+    try:
+        import time
+        start_t = time.time()
+        raw_vision = call_openrouter_multiimage(image_paths, vision_prompt, vision_model)
+        dur = time.time() - start_t
+        vision_parsed = parse_json_response(raw_vision)
+        
+        from app.services.logger_service import log_llm_call
+        log_llm_call(
+            label="story_context_vision", 
+            model=vision_model, 
+            prompt=vision_prompt, 
+            raw_response=raw_vision, 
+            parsed=vision_parsed if isinstance(vision_parsed, dict) else None,
+            duration_sec=dur
+        )
+        
+        if isinstance(vision_parsed, dict) and "asset_descriptions" in vision_parsed:
+            asset_descriptions = vision_parsed["asset_descriptions"]
+            logging.info(f"  ✓ [Step 1] Visual analysis complete: {len(asset_descriptions)} asset(s) described.")
+        else:
+            logging.warning("  ⚠️  [Step 1] Vision model returned unexpected schema. Proceeding with filenames only.")
+    except Exception as e:
+        logging.error(f"  ✗ [Step 1] Vision analysis failed: {e}. Proceeding with filenames only.")
+
+    # If vision step failed or returned incomplete data, build minimal descriptions from filenames
+    if not asset_descriptions or len(asset_descriptions) < num_assets:
+        logging.info("  🔄 Filling missing asset descriptions from filenames...")
+        described_indices = {d.get("index") for d in asset_descriptions}
+        for a in asset_summaries:
+            if a["index"] not in described_indices:
+                asset_descriptions.append({
+                    "index": a["index"],
+                    "setting": "unknown",
+                    "subjects": "unknown",
+                    "activity": "unknown",
+                    "time_of_day": "unknown",
+                    "emotional_tone": "unknown",
+                    "trip_phase": "unknown"
+                })
+        asset_descriptions = sorted(asset_descriptions, key=lambda d: d.get("index", 0))
+
+    # ── STEP 2: owl-alpha (OpenRouter, text only) — Narrative Writing ──────────
+    narrative_model = CONFIG.get("story_narrative_model", "openrouter/owl-alpha")
+    narrative_prompt = build_story_narrative_prompt(asset_descriptions, vibe, directives, num_assets)
+    logging.info(f"  ✍️  [Story Step 2/2] Sending descriptions to {narrative_model} for narrative writing...")
+
+    try:
+        import time
+        start_t = time.time()
+        raw_narrative = call_openrouter_text(
+            narrative_prompt,
+            model=narrative_model,
+            fallbacks=["openai/gpt-4o-mini", "google/gemini-flash-1.5"],
+            temperature=0.7,  # slightly creative for narrative writing
+        )
+        dur = time.time() - start_t
+        parsed = parse_json_response(raw_narrative)
+        
+        from app.services.logger_service import log_llm_call
+        log_llm_call(
+            label="story_context_narrative", 
+            model=narrative_model, 
+            prompt=narrative_prompt, 
+            raw_response=raw_narrative, 
+            parsed=parsed if isinstance(parsed, dict) else None,
+            duration_sec=dur
+        )
+        
+        if isinstance(parsed, dict) and "asset_order" in parsed and "story_summary" in parsed:
+            summary = parsed.get("story_summary", "")
+            logging.info(f"  ✓ [Step 2] Story narrative complete: {summary[:120]}...")
+            return parsed
+        else:
+            logging.warning(f"  ⚠️  [Step 2] Narrative model returned invalid schema: {str(parsed)[:200]}")
+            return None
+    except Exception as e:
+        logging.error(f"  ✗ [Step 2] Narrative writing failed: {e}")
+        return None
+
+
+
 def run_full_analysis(
     video_infos: list,
     api_key: str,
@@ -969,11 +1101,33 @@ def run_full_analysis(
     directives: str = "",
     use_uploaded_order: bool = False,
     progress_callback = None,
+    story_context: dict = None,
 ) -> list:
     """
     Run process_single_video for all videos in parallel, then build final
     ordered best_segments list with story ordering.
     """
+    def extract_whatsapp_timestamp(filepath: str):
+        import re
+        from datetime import datetime
+        filename = Path(filepath).name
+        # Match: WhatsApp Video 2026-06-19 at 16.10.26.mp4 or WhatsApp Image 2026-06-19 at 16.10.26.jpeg
+        match = re.search(r'(\d{4}-\d{2}-\d{2})\s+at\s+(\d{2})\.(\d{2})\.(\d{2})', filename)
+        if match:
+            date_str, hh, mm, ss = match.groups()
+            try:
+                return datetime.strptime(f"{date_str} {hh}:{mm}:{ss}", "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                pass
+        # Try just matching date
+        match_date = re.search(r'(\d{4}-\d{2}-\d{2})', filename)
+        if match_date:
+            try:
+                return datetime.strptime(match_date.group(1), "%Y-%m-%d")
+            except Exception:
+                pass
+        return None
+
     pipeline_start_time = time.time()
 
     logging.info(f"\n{'='*60}")
@@ -982,10 +1136,12 @@ def run_full_analysis(
 
     max_workers = min(len(video_infos) or 1, CONFIG.get("max_parallel_vision_calls", 3))
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futures = [
-            ex.submit(process_single_video, info, api_key, video_quality_map, reference_paths, directives)
-            for info in video_infos
-        ]
+        futures = []
+        for idx, info in enumerate(video_infos):
+            journey_phase = None
+            if story_context and "asset_phases" in story_context:
+                journey_phase = story_context["asset_phases"].get(str(idx))
+            futures.append(ex.submit(process_single_video, info, api_key, video_quality_map, reference_paths, directives, journey_phase))
         import concurrent.futures
         all_results = []
         for future in concurrent.futures.as_completed(futures):
@@ -995,6 +1151,13 @@ def run_full_analysis(
 
     best_segments = []
     for video_idx, result in enumerate(all_results):
+        # Find the original index of this video in the input video_infos list to ensure
+        # that video_idx matches the media_assets sequence index (and does not depend on
+        # the arbitrary order in which parallel threads complete).
+        orig_video_idx = next(
+            (i for i, info in enumerate(video_infos) if info["path"] == result["video_path"]),
+            video_idx
+        )
         segs = sorted(result["analysis"].get("best_segments", []),
                       key=lambda s: float(s.get("start_sec", 0)))
         for seg in segs:
@@ -1016,7 +1179,7 @@ def run_full_analysis(
 
             constructed_seg = {
                 "video_path":         result["video_path"],
-                "video_idx":          video_idx,
+                "video_idx":          orig_video_idx,
                 "video_duration_sec": result["duration_sec"],
                 "video_summary":      result["analysis"].get("video_summary",  ""),
                 "overall_mood":       result["analysis"].get("overall_mood",   ""),
@@ -1038,6 +1201,7 @@ def run_full_analysis(
                 "primary_subjects":   seg.get("primary_subjects", []),
                 "what_happens":       seg.get("what_happens", ""),
                 "mood":               seg.get("mood", ""),
+                "creation_time":      result.get("creation_time"),
             }
             constructed_seg["ai_score"] = calculate_alignment_score(constructed_seg, directives)
             best_segments.append(constructed_seg)
@@ -1212,26 +1376,40 @@ def run_full_analysis(
             seg["is_used"] = False
 
     # ── Temporal Pre-sorting or Uploaded Order Sorting ────────────────────────
-    if use_uploaded_order:
+    if story_context and "asset_order" in story_context:
+        logging.info("  📂 Sorting clips globally based on story_context asset_order...")
+        asset_order = story_context["asset_order"]
+        # Create a mapping from video_idx to its position in the asset_order
+        # If an asset_idx isn't in the order (shouldn't happen), push it to the end
+        order_map = {idx: pos for pos, idx in enumerate(asset_order)}
+        survived = sorted(
+            survived,
+            key=lambda s: (order_map.get(int(s.get("video_idx", 0)), 999), float(s.get("start_sec", 0.0)))
+        )
+    elif use_uploaded_order:
         logging.info("  📂 Sorting clips strictly by uploaded file order...")
         survived = sorted(
             survived,
             key=lambda s: (int(s.get("video_idx", 0)), float(s.get("start_sec", 0.0)))
         )
     else:
-        TIME_ORDER = {
-            "dawn": 0, "morning": 1, "afternoon": 2, "day": 2, "midday": 2,
-            "golden_hour": 3, "sunset": 3, "dusk": 4, "evening": 4, "night": 5, "unknown": 6
-        }
-        def sort_by_temporal_flow(segments):
-            return sorted(
-                segments,
-                key=lambda s: (
-                    TIME_ORDER.get(s.get("time_of_day", "unknown"), 6),
-                    int(s.get("priority", 999) or 999)
-                )
-            )
-        survived = sort_by_temporal_flow(survived)
+        logging.info("  📂 Sorting clips chronologically by filename timestamps...")
+        def sort_by_timestamp_and_idx(segments):
+            def get_sort_key(s):
+                ts = extract_whatsapp_timestamp(s["video_path"])
+                if ts:
+                    return (ts, int(s.get("video_idx", 0)), float(s.get("start_sec", 0.0)))
+                else:
+                    from datetime import datetime
+                    TIME_ORDER = {
+                        "dawn": 0, "morning": 1, "afternoon": 2, "day": 2, "midday": 2,
+                        "golden_hour": 3, "sunset": 3, "dusk": 4, "evening": 4, "night": 5, "unknown": 6
+                    }
+                    fallback_time_val = TIME_ORDER.get(s.get("time_of_day", "unknown"), 6)
+                    dummy_ts = datetime.combine(datetime.min.date(), datetime.min.time().replace(hour=fallback_time_val))
+                    return (dummy_ts, int(s.get("video_idx", 0)), float(s.get("start_sec", 0.0)))
+            return sorted(segments, key=get_sort_key)
+        survived = sort_by_timestamp_and_idx(survived)
 
     # ── Story ordering (run only on survived clips) ─────────────────────────
     story_order = list(range(len(survived)))
@@ -1265,7 +1443,7 @@ def run_full_analysis(
             except Exception:
                 seg["is_landscape"] = False
 
-        story_prompt = build_story_order_prompt(survived, all_results, directives, focus)
+        story_prompt = build_story_order_prompt(survived, all_results, directives, focus, story_context)
         t0 = time.time()
         raw_order = None
         story_model = CONFIG.get("story_order_model", CONFIG["model"])
@@ -1730,7 +1908,37 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                 sys.path.append(root_dir)
             from quality import analyze_all_videos_quality
             video_quality_map = analyze_all_videos_quality(video_infos)
+            
+            # Export quality map for reuse in Phase 2
+            try:
+                from app.services.storage_service import storage_service
+                export_map = {Path(k).name: v for k, v in video_quality_map.items()}
+                quality_key = f"projects/{project_id}/jobs/{job_uuid}/quality_map.json"
+                storage_service.upload_json(export_map, quality_key)
+                logging.info(f"  [quality] Exported quality map to MinIO ({quality_key})")
+            except Exception as e:
+                logging.warning(f"  [quality] Failed to export quality map to MinIO: {e}")
             # ------------------------
+            # --- STORY CONTEXT ANALYSIS ---
+            update_progress(15)
+            story_context = run_story_context_analysis(video_infos, vibe, directives, tmpdir)
+            
+            if story_context:
+                async def _save_story_context():
+                    async with TaskSessionLocal() as db:
+                        result = await db.execute(select(AnalysisJob).filter(AnalysisJob.id == job_uuid))
+                        job = result.scalar_one_or_none()
+                        if job:
+                            job.story_summary = story_context.get("story_summary")
+                            job.proposed_asset_order = story_context.get("asset_order")
+                            job.asset_phases = story_context.get("asset_phases")
+                            job.status = JobStatus.STORY_PROPOSED
+                            job.progress = 20
+                            await db.commit()
+                loop.run_until_complete(_save_story_context())
+                logging.info(f"  ✓ Phase 1 complete: Story proposed for Job {job_id}. Pausing for user confirmation.")
+                return
+            # ------------------------------
 
             total = len(video_infos)
             completed = [0]
@@ -1738,7 +1946,7 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
             def on_video_done():
                 with lock:
                     completed[0] += 1
-                    p = 10 + int((completed[0] / total) * 70) if total else 80
+                    p = 20 + int((completed[0] / total) * 60) if total else 80
                     update_progress(p)
 
             try:
@@ -1748,7 +1956,8 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                     video_quality_map=video_quality_map,
                     reference_paths=[],
                     directives=directives,
-                    progress_callback=on_video_done
+                    progress_callback=on_video_done,
+                    story_context=story_context
                 )
                 
                 update_progress(90)
@@ -1799,6 +2008,9 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                             instrumental=music_config.get("instrumental", True),
                             tmpdir=tmpdir
                         )
+                        if not music_path:
+                            logging.warning("Suno AI failed (likely 429 Insufficient Credits). Falling back to royalty-free 'ai' music.")
+                            music_path = pick_ai_music(vibe, final_segs, tmpdir)
 
                         
                     if music_path and os.path.exists(music_path):
@@ -1833,6 +2045,242 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                 update_progress(0, JobStatus.FAILED, error=str(e))
                 raise
 
+    finally:
+        loop.run_until_complete(task_engine.dispose())
+        loop.close()
+
+
+@celery_app.task(bind=True)
+def continue_video_analysis(self, job_id: str, confirmed_order: list, confirmed_summary: str, confirmed_phases: dict, music_config: dict = None):
+    import uuid
+    import asyncio
+    import os
+    import requests
+    import tempfile
+    import threading
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from sqlalchemy.pool import NullPool
+    from sqlalchemy.orm import selectinload
+    from app.core.config import settings
+    from app.models.domain import AnalysisJob, Project, AnalyzedClip, JobStatus
+    
+    job_uuid = uuid.UUID(job_id)
+
+    task_engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool, echo=False)
+    TaskSessionLocal = async_sessionmaker(task_engine, expire_on_commit=False)
+    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    async def _update_progress(p: int, status: JobStatus = None, error: str = None):
+        async with TaskSessionLocal() as db:
+            result = await db.execute(select(AnalysisJob).filter(AnalysisJob.id == job_uuid))
+            job = result.scalar_one_or_none()
+            if job:
+                job.progress = p
+                if status:
+                    job.status = status
+                if error:
+                    job.error_message = error
+                await db.commit()
+
+    def update_progress(p: int, status: JobStatus = None, error: str = None):
+        loop.run_until_complete(_update_progress(p, status, error))
+
+    try:
+        update_progress(25, JobStatus.RUNNING)
+        
+        async def _get_job_details():
+            async with TaskSessionLocal() as db:
+                result = await db.execute(
+                    select(AnalysisJob)
+                    .options(selectinload(AnalysisJob.project).selectinload(Project.media_assets))
+                    .filter(AnalysisJob.id == job_uuid)
+                )
+                job = result.scalar_one_or_none()
+                if not job:
+                    raise ValueError(f"Job {job_id} not found.")
+                
+                project_id = str(job.project_id)
+                vibe = job.vibe or "cinematic"
+                sorted_assets = sorted(job.project.media_assets, key=lambda a: a.sequence_index)
+                media_assets = [
+                    {
+                        "id": str(asset.id),
+                        "file_name": asset.filename,
+                        "storage_path": asset.object_key,
+                    }
+                    for asset in sorted_assets
+                ]
+                return project_id, vibe, media_assets
+                
+        project_id, vibe, media_assets = loop.run_until_complete(_get_job_details())
+        
+        from app.services.logger_service import init_run_log_dir
+        init_run_log_dir(project_id, job_id)
+        logging.info(f"  🎬 [Pipeline Phase 2] Continuing analysis for job {job_id} | vibe={vibe!r}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            video_paths = []
+            from app.services.storage_service import storage_service
+            for idx, asset in enumerate(media_assets):
+                ext = asset.get('file_name', '').split('.')[-1]
+                if not ext:
+                    ext = 'mp4'
+                local_path = os.path.join(tmpdir, f"asset_{idx}.{ext}")
+                presigned = storage_service.generate_presigned_url(asset["storage_path"])
+                r = requests.get(presigned)
+                
+                if r.status_code != 200:
+                    logging.error(f"  ❌ Failed to download {asset.get('file_name', 'unknown')} (status={r.status_code}) from MinIO.")
+                    continue
+                    
+                with open(local_path, "wb") as f:
+                    f.write(r.content)
+                
+                video_paths.append(local_path)
+                
+            video_infos = []
+            for vp in video_paths:
+                info = get_video_info(vp)
+                if info:
+                    video_infos.append(info)
+
+            # --- QUALITY ANALYSIS ---
+            import sys
+            from pathlib import Path
+            root_dir = str(Path(__file__).resolve().parent.parent.parent.parent)
+            if root_dir not in sys.path:
+                sys.path.append(root_dir)
+            from quality import analyze_all_videos_quality
+            
+            video_quality_map = {}
+            try:
+                from app.services.storage_service import storage_service
+                quality_key = f"projects/{project_id}/jobs/{job_uuid}/quality_map.json"
+                export_map = storage_service.download_json(quality_key)
+                
+                if export_map:
+                    for info in video_infos:
+                        filename = Path(info["path"]).name
+                        if filename in export_map:
+                            video_quality_map[info["path"]] = export_map[filename]
+                    logging.info(f"  [quality] Successfully restored quality map from MinIO for {len(video_quality_map)} videos.")
+            except Exception as e:
+                logging.warning(f"  [quality] Failed to restore quality map from MinIO: {e}")
+                
+            if not video_quality_map:
+                logging.info("  [quality] Running full quality analysis from scratch...")
+                video_quality_map = analyze_all_videos_quality(video_infos)
+            # ------------------------
+
+            total = len(video_infos)
+            completed = [0]
+            lock = threading.Lock()
+            def on_video_done():
+                with lock:
+                    completed[0] += 1
+                    p = 25 + int((completed[0] / total) * 55) if total else 80
+                    update_progress(p)
+
+            try:
+                story_context = {
+                    "story_summary": confirmed_summary,
+                    "asset_order": confirmed_order,
+                    "asset_phases": confirmed_phases
+                }
+                
+                final_segs, _all_results = run_full_analysis(
+                    video_infos,
+                    api_key=settings.NVIDIA_API_KEY,
+                    video_quality_map=video_quality_map,
+                    reference_paths=[],
+                    directives="",
+                    progress_callback=on_video_done,
+                    story_context=story_context
+                )
+                
+                update_progress(85)
+                async def _save_results(segs):
+                    async with TaskSessionLocal() as db:
+                        for idx, seg in enumerate(segs):
+                            v_idx = int(seg.get("video_idx", 0))
+                            result = await db.execute(
+                                select(Project).options(selectinload(Project.media_assets)).filter(Project.id == uuid.UUID(project_id))
+                            )
+                            proj = result.scalar_one()
+                            db_assets = sorted(proj.media_assets, key=lambda a: a.sequence_index)
+                            m_asset = db_assets[v_idx] if v_idx < len(db_assets) else db_assets[0]
+                            
+                            clip = AnalyzedClip(
+                                job_id=job_uuid,
+                                media_asset_id=m_asset.id,
+                                start_sec=float(seg.get("start_sec", 0.0)),
+                                end_sec=float(seg.get("end_sec", 0.0)),
+                                story_position=idx,
+                                metadata_json=seg,
+                                is_used=bool(seg.get("is_used", True))
+                            )
+                            db.add(clip)
+                        await db.commit()
+                
+                loop.run_until_complete(_save_results(final_segs))
+                
+                # Stitch the segments into a final video summary and upload to MinIO
+                logging.info("  🎬 [Pipeline Phase 2] Generating final stitched video summary...")
+                clips_dir = Path(tmpdir) / "clips"
+                reel_path = Path(tmpdir) / "final_video.mp4"
+                
+                from app.services.stitch_service import build_reel_from_segments
+                build_reel_from_segments(final_segs, clips_dir, reel_path)
+                
+                # Check for music integration
+                if music_config and music_config.get("mode") != "none":
+                    logging.info(f"  🎵 [Pipeline Phase 2] Running music selection flow. Mode: {music_config.get('mode')}")
+                    from app.services.music_service import resolve_custom_music, pick_ai_music, mix_music_into_video, resolve_suno_music
+                    
+                    music_path = None
+                    if music_config.get("mode") == "custom" and music_config.get("custom_query"):
+                        music_path = resolve_custom_music(music_config["custom_query"], tmpdir)
+                    elif music_config.get("mode") == "ai":
+                        music_path = pick_ai_music(vibe, final_segs, tmpdir)
+                    elif music_config.get("mode") == "suno":
+                        music_path = resolve_suno_music(
+                            vibe=vibe,
+                            final_segs=final_segs,
+                            instrumental=music_config.get("instrumental", True),
+                            tmpdir=tmpdir
+                        )
+                        if not music_path:
+                            logging.warning("Suno AI failed (likely 429 Insufficient Credits). Falling back to royalty-free 'ai' music.")
+                            music_path = pick_ai_music(vibe, final_segs, tmpdir)
+                        
+                    if music_path and os.path.exists(music_path):
+                        logging.info(f"  🎵 [Pipeline Phase 2] Music resolved to local path: {music_path}. Mixing...")
+                        mixed_reel_path = Path(tmpdir) / "final_video_mixed.mp4"
+                        try:
+                            mix_music_into_video(str(reel_path), music_path, str(mixed_reel_path))
+                            if mixed_reel_path.exists():
+                                reel_path = mixed_reel_path
+                                logging.info("  🎵 [Pipeline Phase 2] Music successfully mixed.")
+                        except Exception as mix_err:
+                            logging.error(f"  ❌ Failed to mix music: {mix_err}")
+                
+                if reel_path.exists():
+                    logging.info("  📤 [Pipeline Phase 2] Uploading final video to MinIO...")
+                    object_key = f"projects/{project_id}/jobs/{job_id}/final_video.mp4"
+                    with open(reel_path, "rb") as video_file:
+                        storage_service.upload_file_obj(video_file, object_key, content_type="video/mp4")
+                    logging.info(f"  ✅ [Pipeline Phase 2] Final video uploaded: {object_key}")
+                else:
+                    raise FileNotFoundError("Final video file was not created by stitcher.")
+                
+                update_progress(100, JobStatus.COMPLETED)
+                
+            except Exception as e:
+                update_progress(0, JobStatus.FAILED, error=str(e))
+                raise
+                
     finally:
         loop.run_until_complete(task_engine.dispose())
         loop.close()

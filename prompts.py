@@ -422,14 +422,14 @@ Editor Read: {seg.get("editor_reasoning", "")[:220] or "N/A"}
     # ─────────────────────────────────────────────────────────────
 
     temporal_note = (
-        "The clips below have already been pre-sorted into a day-to-night temporal flow by the system.\n"
-        "Your job is NOT to completely reorder by time — that is already done.\n"
-        "Make minimal swaps to ensure locations are grouped. Preserve the day → night flow unless an emotional reason is extremely compelling."
+        "The clips below are pre-sorted by file/recording timestamps, but some may be out-of-order due to copy/download times.\n"
+        "Your job is to arrange the clips into a logical, coherent narrative sequence (e.g. arrival/drive → evening sunset → night darshan → morning activities → leaving/departure).\n"
+        "Use the clip descriptions, time_of_day, and location tags to reconstruct the correct journey flow. Keep locations contiguously grouped."
     )
     if directives:
         temporal_note = (
             "You have full freedom to reorder the clips to best satisfy the USER EDITING DIRECTIVES above.\n"
-            "Prioritize the chronological flow, subject focus, or progression requested by the user."
+            "Prioritize the chronological flow, journey progression, or subject focus requested by the user, using the descriptions to reconstruct the narrative journey."
         )
 
     directives_note = ""

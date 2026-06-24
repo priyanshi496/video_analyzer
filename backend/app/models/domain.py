@@ -16,6 +16,7 @@ class ProjectStatus(str, enum.Enum):
 
 class JobStatus(str, enum.Enum):
     PENDING = "PENDING"
+    STORY_PROPOSED = "STORY_PROPOSED"
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
@@ -96,6 +97,12 @@ class AnalysisJob(Base):
     selected_clip_count = Column(Integer, default=0)
     total_runtime_sec = Column(Float, default=0.0)
     sequence_rationale = Column(Text, nullable=True)
+    story_summary = Column(Text, nullable=True)
+    proposed_asset_order = Column(JSONB, nullable=True)
+    confirmed_asset_order = Column(JSONB, nullable=True)
+    asset_phases = Column(JSONB, nullable=True)
+    directives = Column(Text, nullable=True)
+    music_config = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime(timezone=True), nullable=True)

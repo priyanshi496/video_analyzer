@@ -347,23 +347,26 @@ def generate_suno_prompt_from_descriptions(vibe: str, final_segs: list, instrume
 def generate_suno_music(prompt: str, output_path: str, instrumental: bool) -> bool:
     """
     Generates music via sunoapi.org REST API and saves the output file.
+    Uses polling-only flow (no webhook callback required).
     """
     import requests
     import time
+    from app.core.config import settings
     
-    api_key = os.environ.get("SUNO_API_KEY")
+    api_key = os.environ.get("SUNO_API_KEY") or settings.SUNO_API_KEY
     if not api_key:
-        logger.error("No SUNO_API_KEY found in environment variables.")
+        logger.error("No SUNO_API_KEY found in environment variables or settings.")
         return False
         
     base_url = "https://api.sunoapi.org/api/v1"
     
+    # Restored callBackUrl placeholder to satisfy Suno API request validation constraints
     payload = {
         "model": "V4",
         "customMode": False,
         "instrumental": instrumental,
-        "callBackUrl": "",
-        "prompt": prompt[:500]
+        "prompt": prompt[:500],
+        "callBackUrl": "https://example.com/callback"
     }
     
     try:
@@ -379,13 +382,20 @@ def generate_suno_music(prompt: str, output_path: str, instrumental: bool) -> bo
         )
         resp.raise_for_status()
         data = resp.json()
+        logger.info(f"Suno submit response: {data}")
+
+        # Extract taskId from various possible nesting levels
+        task_id = None
+        if isinstance(data.get("data"), dict):
+            task_id = data["data"].get("taskId") or data["data"].get("task_id")
+        if not task_id:
+            task_id = data.get("taskId") or data.get("task_id")
         
-        task_id = data.get("data", {}).get("taskId") or data.get("taskId")
         if not task_id:
             logger.error(f"No taskId found in Suno response: {data}")
             return False
             
-        logger.info(f"Suno task submitted successfully. Task ID: {task_id}. Polling for completion...")
+        logger.info(f"Suno task submitted. Task ID: {task_id}. Polling for completion...")
         
         # Poll for completion
         max_wait = 300
@@ -404,34 +414,72 @@ def generate_suno_music(prompt: str, output_path: str, instrumental: bool) -> bo
             )
             poll_resp.raise_for_status()
             result = poll_resp.json()
-            
-            status = result.get("data", {}).get("status") or result.get("status", "")
+            logger.info(f"Suno poll [{elapsed}s]: {result}")
+
+            # Navigate the response: try multiple nesting levels
+            result_data = result.get("data") or {}
+            if not isinstance(result_data, dict):
+                result_data = {}
+
+            status = result_data.get("status") or result.get("status", "")
+            logger.info(f"Suno status: {status}")
+
             if status == "SUCCESS":
-                tracks = result.get("data", {}).get("data", []) or result.get("data", [])
+                # Extract tracks — try all common nesting patterns:
+                # Pattern A: result["data"]["data"] = [track, ...]
+                # Pattern B: result["data"]["tracks"] = [track, ...]
+                # Pattern C: result["data"] = [track, ...]   (flat list)
+                # Pattern D: result["tracks"] = [track, ...]
+                tracks = None
+                logger.info(f"Full Suno poll result for track extraction: {json.dumps(result, indent=2)}")
+                candidates = [
+                    result_data.get("response", {}).get("sunoData") if isinstance(result_data.get("response"), dict) else None,
+                    result_data.get("sunoData"),
+                    result_data.get("data"),
+                    result_data.get("tracks"),
+                    result_data.get("response"),
+                    result.get("tracks"),
+                    result.get("data") if isinstance(result.get("data"), list) else None,
+                ]
+                for candidate in candidates:
+                    if isinstance(candidate, list) and len(candidate) > 0:
+                        tracks = candidate
+                        break
+                
                 if not tracks:
-                    logger.error("Suno returned SUCCESS but no tracks list.")
+                    logger.error(f"Suno returned SUCCESS but could not find tracks in response: {result}")
                     return False
                     
-                # Get the first track
+                # Get audio URL from first track
                 track = tracks[0]
-                audio_url = track.get("audio_url")
+                audio_url = None
+                if isinstance(track, dict):
+                    audio_url = (
+                        track.get("audio_url")
+                        or track.get("audioUrl")
+                        or track.get("url")
+                        or track.get("stream_audio_url")
+                    )
+
                 if not audio_url:
-                    logger.error("No audio_url found in successful Suno track.")
+                    logger.error(f"No audio_url found in Suno track: {track}")
                     return False
                     
-                logger.info(f"Suno generation completed. Downloading from {audio_url}...")
+                logger.info(f"Suno generation complete. Downloading from {audio_url}...")
                 dl_resp = requests.get(audio_url, timeout=120)
                 dl_resp.raise_for_status()
                 
                 output_path_obj = Path(output_path)
                 output_path_obj.parent.mkdir(parents=True, exist_ok=True)
                 output_path_obj.write_bytes(dl_resp.content)
-                logger.info(f"Successfully downloaded Suno music to {output_path}")
+                logger.info(f"✓ Suno music saved to {output_path}")
                 return True
                 
-            elif status in ("CREATE_TASK_FAILED", "GENERATE_AUDIO_FAILED", "SENSITIVE_WORD_ERROR"):
-                logger.error(f"Suno generation failed with status: {status}")
+            elif status in ("CREATE_TASK_FAILED", "GENERATE_AUDIO_FAILED", "SENSITIVE_WORD_ERROR", "FAILED"):
+                logger.error(f"Suno generation failed with status: {status}. Full response: {result}")
                 return False
+            else:
+                logger.info(f"Suno still generating ({elapsed}s elapsed)... status={status or 'pending'}")
                 
         logger.error(f"Suno generation timed out after {max_wait} seconds.")
         return False
@@ -439,6 +487,7 @@ def generate_suno_music(prompt: str, output_path: str, instrumental: bool) -> bo
     except Exception as e:
         logger.error(f"Exception during Suno music generation: {e}")
         return False
+
 
 def resolve_suno_music(vibe: str, final_segs: list, instrumental: bool, tmpdir: str) -> str:
     """
