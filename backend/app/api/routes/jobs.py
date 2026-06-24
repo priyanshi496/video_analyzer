@@ -143,11 +143,57 @@ async def get_job_status(
             status=job.status,
             progress=job.progress,
             error_message=job.error_message,
-            created_at=str(job.created_at),
-            final_video_url=final_video_url,
+            vibe=job.vibe,
+            directives=job.directives,
             story_summary=job.story_summary,
             proposed_asset_order=job.proposed_asset_order,
-            asset_phases=job.asset_phases
+            asset_phases=job.asset_phases,
+            created_at=str(job.created_at),
+            final_video_url=final_video_url
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        err = traceback.format_exc()
+        raise HTTPException(status_code=500, detail=str(err))
+
+@router.get("/projects/{project_id}/jobs/latest", response_model=JobStatusResponse)
+async def get_latest_job(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        job_result = await db.execute(
+            select(AnalysisJob)
+            .join(Project, Project.id == AnalysisJob.project_id)
+            .filter(Project.id == project_id, or_(Project.user_id == current_user.id, Project.user_id == None))
+            .order_by(AnalysisJob.created_at.desc())
+            .limit(1)
+        )
+        job = job_result.scalar_one_or_none()
+        if not job:
+            raise HTTPException(status_code=404, detail="No jobs found for this project")
+
+        final_video_url = None
+        if job.status == JobStatus.COMPLETED:
+            object_key = f"projects/{job.project_id}/jobs/{job.id}/final_video.mp4"
+            final_video_url = storage_service.generate_presigned_url(object_key)
+
+        return JobStatusResponse(
+            id=str(job.id),
+            project_id=str(job.project_id),
+            status=job.status,
+            progress=job.progress,
+            error_message=job.error_message,
+            vibe=job.vibe,
+            directives=job.directives,
+            story_summary=job.story_summary,
+            proposed_asset_order=job.proposed_asset_order,
+            asset_phases=job.asset_phases,
+            created_at=str(job.created_at),
+            final_video_url=final_video_url
         )
     except HTTPException:
         raise
