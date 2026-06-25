@@ -76,5 +76,15 @@ class StorageService:
             logger.warning(f"Failed to download or parse JSON from MinIO ({object_key}): {e}")
             return None
 
+    def delete_object(self, object_key: str, bucket: str = None):
+        target_bucket = bucket or self.bucket_name
+        try:
+            self.s3_client.delete_object(Bucket=target_bucket, Key=object_key)
+            return True
+        except ClientError as e:
+            logger.error(f"Failed to delete {object_key} from bucket {target_bucket}: {e}")
+            return False
+
 storage_service = StorageService()
+
 

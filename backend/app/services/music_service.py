@@ -238,7 +238,14 @@ def pick_ai_music(vibe: str, final_segs: list, tmpdir: str) -> str:
             score += 5
         elif song_mood == "chill" and any(w in full_text for w in ["chill", "relax", "calm", "slow", "peaceful"]):
             score += 5
-            
+
+        # Direct exact keyword matching (SUPER BOOST)
+        # If the story explicitly mentions a specific entity (like "Hanuman", "Garba"), boost the specific song heavily.
+        for kw in song.get("keywords", []):
+            if kw.lower() in full_text:
+                score += 50
+                break
+
         scored_songs.append((score, song))
             
     if not scored_songs:
@@ -282,8 +289,8 @@ def mix_music_into_video(video_path: str, music_path: str, output_path: str):
     saves the output to output_path.
     """
     duration = get_video_duration(video_path)
-    start_fade = max(0.0, duration - 1.0)
-    fade_duration = min(1.0, duration)
+    start_fade = max(0.0, duration - 2.0)
+    fade_duration = min(1.5, duration)
     
     cmd = [
         "ffmpeg", "-y",
