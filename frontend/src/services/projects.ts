@@ -59,6 +59,11 @@ export const projectService = {
     return response.data;
   },
 
+  async listJobs(projectId: string) {
+    const response = await api.get(`/projects/${projectId}/jobs`);
+    return response.data;
+  },
+
   async confirmStory(jobId: string, payload: any) {
     const response = await api.post(`/jobs/${jobId}/confirm-story`, payload);
     return response.data;

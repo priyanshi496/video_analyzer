@@ -348,4 +348,4 @@ The user has provided the following instructions to change the story:
 Please rewrite the story summary to perfectly reflect the user's instructions.
 Return ONLY the newly written paragraph. Do not include any explanations, preambles, or markdown formatting. Keep the tone cinematic, emotional, and highly engaging.
 """
-    return call_openrouter_text(prompt, model="openai/gpt-4o-mini", fallbacks=["google/gemini-flash-1.5-8b"], temperature=0.7)
+    return call_openrouter_text(prompt, model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", fallbacks=["openai/gpt-oss-120b:free"], temperature=0.7)
