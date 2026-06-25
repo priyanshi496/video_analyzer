@@ -437,7 +437,8 @@ Type: {entry['clip_type']}
 Duration: {entry['dur']}s
 Aspect Ratio: {aspect}
 Phase: {seg.get("journey_phase", "unknown")}
-Location: {seg.get("location_tag", "unknown")}
+Location: {seg.get("location_tag", "unknown")}{f' ({seg.get("location_name")})' if seg.get("location_name") else ''}
+Created At: {seg.get("creation_time", "unknown")}
 Role: {seg.get("narrative_role", "unknown")}
 Mood: {seg.get("overall_mood", "")}
 Reason: {entry['reason']}{similar_note}
@@ -581,7 +582,7 @@ CRITICAL RULES:
 - removed_clips MUST NOT appear in order
 - You MUST include ALL clips in 'order' that you did not explicitly remove in 'removed_clips'. Do NOT drop clips silently.
 - CLIP COUNT CHECK: There are {len(segments)} clips (indices 0 to {len(segments)-1}). You MUST include all clips that you did not remove. If you use split-screen grids, the total number of individual clip indices across your entire `order` array (including inside nested arrays) MUST equal {len(segments)} minus len(removed_clips). The `order` array itself may have fewer entries because a grid groups 3 clips into 1 entry!
-- STRICT LOCATION GROUPING (CRITICAL): ALL clips (and grids) from the same location or scene MUST be grouped together contiguously in the final timeline! You must play all clips/grids from a location before moving to the next. DO NOT jump back and forth (e.g., Beach Grid -> Window -> Beach Grid is STRICTLY FORBIDDEN). If you make multiple split-screen grids from 'beach' clips, they must be played back-to-back. The ONLY exception is that a SINGLE split-screen grid may internally contain clips from different locations if needed.
+- STRICT LOCATION GROUPING (CRITICAL): ALL clips (and grids) from the same geographical/geocoded location or scene MUST be grouped together contiguously in the final timeline! You must play all clips/grids from one location/trip before moving to the next. DO NOT jump back and forth (e.g., Mount Abu -> Bali -> Mount Abu, or Beach -> Window -> Beach is STRICTLY FORBIDDEN). If you make multiple split-screen grids from 'beach' clips, they must be played back-to-back. The ONLY exception is that a SINGLE split-screen grid may internally contain clips from different locations if needed.
 - CRITICAL: YOU MUST STRICTLY FOLLOW THESE USER EDITING DIRECTIVES:
 {directives}
 
@@ -656,7 +657,7 @@ Your job is ONLY to:
 3. Decide the best HOOK (first clip) within Act I.
 4. Ensure no consecutive same-type clips (swap adjacent clips if needed).
 5. Choose the best PAYOFF (final clip) within Act III.
-6. STRICT LOCATION GROUPING: You MUST group clips from the same physical location/scene together as a contiguous block. Do NOT jump back and forth between locations (e.g. location A -> location B -> location A is strictly forbidden).
+6. STRICT LOCATION GROUPING: You MUST group clips from the same geographical/geocoded location/scene together as a contiguous block. Do NOT jump back and forth between locations/trips (e.g. Mount Abu -> Bali -> Mount Abu is strictly forbidden).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SPLIT-SCREEN GRIDS (NEW FEATURE)
@@ -859,13 +860,25 @@ def build_story_vision_prompt(asset_summaries: list) -> str:
     Returns per-asset descriptions that feed into Step 2.
     """
     num_assets = len(asset_summaries)
-    asset_list = "\n".join([f"Image {a['index']} ({a['filename']})" for a in asset_summaries])
+    asset_list = []
+    for a in asset_summaries:
+        loc = a.get('location_name') or 'Unknown Location'
+        time = a.get('creation_time') or 'Unknown Time'
+        asset_list.append(f"Image {a['index']} ({a['filename']}) - EXIF Metadata: Location: {loc}, Time: {time}")
+    
+    asset_list_str = "\n".join(asset_list)
 
     return f"""You are a precise visual analyst. You will be given {num_assets} images in order.
 Each image is a thumbnail from a real trip or event video/photo.
 
+CRITICAL: EXIF METADATA PROVIDED.
+You are provided with real-world GPS Location and Time metadata for each image below. You MUST use this data to ground your descriptions.
+- If the location says "Sarangpur Hanuman", DO NOT hallucinate other deities like "Ganesha". It is Hanuman.
+- Use the provided location to confidently state the setting instead of guessing.
+- Use the provided time to confidently state the time_of_day instead of guessing from lighting.
+
 IMAGES:
-{asset_list}
+{asset_list_str}
 
 For EACH image (in the order provided), output a short structured description covering:
 - setting: where is this? (e.g., car interior, highway, temple exterior, shrine interior, night architecture, giant statue plaza, pond, etc.)
@@ -903,7 +916,9 @@ def build_story_narrative_prompt(asset_descriptions: list, vibe: str, directives
     desc_block = "\n".join([
         f"Asset {d['index']}: [{d.get('trip_phase','?')} | {d.get('time_of_day','?')}] "
         f"{d.get('setting','?')} — {d.get('subjects','?')} — {d.get('activity','?')} — "
-        f"Tone: {d.get('emotional_tone','?')}"
+        f"Tone: {d.get('emotional_tone','?')} | "
+        f"Real-world Location: {d.get('location_name') or 'unknown'} | "
+        f"Real-world Time: {d.get('creation_time') or 'unknown'}"
         for d in asset_descriptions
     ])
 
@@ -915,6 +930,13 @@ Your job is to:
 2. Assign a journey phase to each asset
 3. Write a rich, personal, first-person narrative story
 
+CRITICAL: EXIF METADATA & LOCATION GROUNDING
+You are provided with real-world Location and Time metadata for each asset. You MUST use these real names/details to ground your story:
+- If location metadata points to a specific place (e.g. "Shree Kashtabhanjan dev Hanuman Temple, Salangpur" or a specific town), refer to it directly in the title and narrative.
+- Do NOT use generic placeholder phrases like "Temple of the Giant Deity" if a specific real-world temple name is available.
+- Use the real-world creation times to structure the timeline of your narrative.
+
+
 ━━━ VISUAL ANALYSIS (from vision AI) ━━━
 {desc_block}
 
@@ -924,11 +946,8 @@ DIRECTIVES: {directives if directives else 'None'}
 ━━━ YOUR TASK ━━━
 
 STEP 1 — DETERMINE THE ORDER:
-Look at the assets and figure out the most engaging cinematic storytelling sequence.
-Do NOT just list them in chronological order. Instead, use creative storytelling:
-- Start with a strong HOOK (a highly engaging climax, night view, or impressive shot) to grab attention immediately.
-- Then, you can flash back to the journey (travel → arrival → sightseeing).
-- The "asset_order" field must reflect this cinematic narrative order (e.g., [3, 0, 1, 2, 4, 5, ...]).
+Look at the creation times and location metadata to determine the chronological sequence of events.
+You MUST sequence the assets in strict chronological order based on the 'Real-world Time' and 'Real-world Location' metadata. Group clips from the same trip/location together. Do NOT interleave clips from different trips (e.g. do NOT play Mount Abu, then Bali, then Mount Abu). The "asset_order" field must reflect this chronological trip sequence (e.g., all Bali assets first, then all Mount Abu assets second).
 
 STEP 2 — ASSIGN JOURNEY PHASES:
 For each asset index (0 to {num_assets - 1}), assign one of:

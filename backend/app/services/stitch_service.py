@@ -546,10 +546,11 @@ def stitch_clips(
 
         # Bookend: Fade-out to black at end of last clip (video/audio)
         total_duration = round(cumulative_offset + durations[-1], 3)
-        fade_out_start = max(0.0, round(total_duration - 1.0, 3))
+        fade_out_start = max(0.0, round(total_duration - 2.0, 3))
+        fade_duration = min(1.5, round(total_duration - fade_out_start, 3))
         
-        video_filters.append(f"[vout_temp]fade=t=out:st={fade_out_start}:d=1.0[vout]")
-        audio_filters.append(f"[aout_temp]afade=t=out:st={fade_out_start}:d=1.0[aout]")
+        video_filters.append(f"[vout_temp]fade=t=out:st={fade_out_start}:d={fade_duration}[vout]")
+        audio_filters.append(f"[aout_temp]afade=t=out:st={fade_out_start}:d={fade_duration}[aout]")
 
         filter_complex = ";".join(video_filters + audio_filters)
 
