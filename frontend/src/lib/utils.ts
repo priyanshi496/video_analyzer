@@ -53,3 +53,21 @@ export const musicModeOptions = [
   { value: 'custom', label: 'Custom Song Query', description: 'Search for a specific song' },
   { value: 'none', label: 'No Music', description: 'Original audio only' },
 ];
+
+export const triggerDownload = async (url: string, filename: string = 'reel.mp4') => {
+  try {
+    const response = await fetch(url);
+    const blob = await response.blob();
+    const blobUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(blobUrl);
+  } catch (err) {
+    console.error('Download failed:', err);
+    window.open(url, '_blank');
+  }
+};
