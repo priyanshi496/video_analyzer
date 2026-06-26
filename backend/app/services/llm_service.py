@@ -275,7 +275,12 @@ def call_openrouter_multiimage(
         content.append({"type": "image_url", "image_url": {"url": to_data_url(p)}})
 
     headers = _build_headers(api_key)
-    models_to_try = [model, "google/gemini-3.5-flash"]
+    models_to_try = [
+        model, 
+        "google/gemini-3.5-flash", 
+        "google/gemini-flash-1.5:free",
+        "meta-llama/llama-3.2-11b-vision-instruct:free"
+    ]
     last_err = None
 
     for model_name in models_to_try:
@@ -312,7 +317,11 @@ def call_openrouter_text(prompt: str, model: str, fallbacks: list = None, temper
     api_key = settings.OPENROUTER_API_KEY
     headers = _build_headers(api_key)
     if fallbacks is None:
-        fallbacks = ["openai/gpt-3.5-turbo", "google/gemini-flash-1.5-8b"]
+        fallbacks = [
+            "google/gemini-flash-1.5-8b:free",
+            "meta-llama/llama-3-8b-instruct:free",
+            "google/gemini-flash-1.5:free"
+        ]
     models_to_try = [model] + fallbacks
     last_err = None
 
@@ -348,4 +357,4 @@ The user has provided the following instructions to change the story:
 Please rewrite the story summary to perfectly reflect the user's instructions.
 Return ONLY the newly written paragraph. Do not include any explanations, preambles, or markdown formatting. Keep the tone cinematic, emotional, and highly engaging.
 """
-    return call_openrouter_text(prompt, model="openai/gpt-4o-mini", fallbacks=["google/gemini-flash-1.5-8b"], temperature=0.7)
+    return call_openrouter_text(prompt, model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", fallbacks=["openai/gpt-oss-120b:free"], temperature=0.7)

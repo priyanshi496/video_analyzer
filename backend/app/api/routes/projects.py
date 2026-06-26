@@ -64,8 +64,34 @@ async def update_project(
     await db.refresh(project)
     return project
 
+@router.get("/", response_model=List[ProjectResponse])
+async def list_projects(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    result = await db.execute(
+        select(Project)
+        .where(or_(Project.user_id == current_user.id, Project.user_id == None))
+        .order_by(Project.created_at.desc())
+    )
+    return result.scalars().all()
 
-
+@router.get("/{project_id}", response_model=ProjectResponse)
+async def get_project(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            or_(Project.user_id == current_user.id, Project.user_id == None)
+        )
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
 import asyncio
 
 @router.post("/{project_id}/media", response_model=List[MediaAssetWithUrlResponse], status_code=status.HTTP_201_CREATED)

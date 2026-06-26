@@ -143,11 +143,101 @@ async def get_job_status(
             status=job.status,
             progress=job.progress,
             error_message=job.error_message,
-            created_at=str(job.created_at),
-            final_video_url=final_video_url,
+            vibe=job.vibe,
+            directives=job.directives,
             story_summary=job.story_summary,
             proposed_asset_order=job.proposed_asset_order,
-            asset_phases=job.asset_phases
+            asset_phases=job.asset_phases,
+            created_at=str(job.created_at),
+            final_video_url=final_video_url
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        err = traceback.format_exc()
+        raise HTTPException(status_code=500, detail=str(err))
+
+@router.get("/projects/{project_id}/jobs", response_model=List[JobStatusResponse])
+async def list_project_jobs(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        jobs_result = await db.execute(
+            select(AnalysisJob)
+            .join(Project, Project.id == AnalysisJob.project_id)
+            .filter(Project.id == project_id, or_(Project.user_id == current_user.id, Project.user_id == None))
+            .order_by(AnalysisJob.created_at.desc())
+        )
+        jobs = jobs_result.scalars().all()
+        
+        response_jobs = []
+        for job in jobs:
+            final_video_url = None
+            if job.status == JobStatus.COMPLETED:
+                object_key = f"projects/{job.project_id}/jobs/{job.id}/final_video.mp4"
+                final_video_url = storage_service.generate_presigned_url(object_key)
+                
+            response_jobs.append(
+                JobStatusResponse(
+                    id=str(job.id),
+                    project_id=str(job.project_id),
+                    status=job.status,
+                    progress=job.progress,
+                    error_message=job.error_message,
+                    vibe=job.vibe,
+                    directives=job.directives,
+                    story_summary=job.story_summary,
+                    proposed_asset_order=job.proposed_asset_order,
+                    asset_phases=job.asset_phases,
+                    created_at=str(job.created_at),
+                    final_video_url=final_video_url
+                )
+            )
+        return response_jobs
+    except Exception as e:
+        import traceback
+        err = traceback.format_exc()
+        raise HTTPException(status_code=500, detail=str(err))
+
+@router.get("/projects/{project_id}/jobs/latest", response_model=JobStatusResponse)
+async def get_latest_job(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        job_result = await db.execute(
+            select(AnalysisJob)
+            .join(Project, Project.id == AnalysisJob.project_id)
+            .filter(Project.id == project_id, or_(Project.user_id == current_user.id, Project.user_id == None))
+            .order_by(AnalysisJob.created_at.desc())
+            .limit(1)
+        )
+        job = job_result.scalar_one_or_none()
+        if not job:
+            raise HTTPException(status_code=404, detail="No jobs found for this project")
+
+        final_video_url = None
+        if job.status == JobStatus.COMPLETED:
+            object_key = f"projects/{job.project_id}/jobs/{job.id}/final_video.mp4"
+            final_video_url = storage_service.generate_presigned_url(object_key)
+
+        return JobStatusResponse(
+            id=str(job.id),
+            project_id=str(job.project_id),
+            status=job.status,
+            progress=job.progress,
+            error_message=job.error_message,
+            vibe=job.vibe,
+            directives=job.directives,
+            story_summary=job.story_summary,
+            proposed_asset_order=job.proposed_asset_order,
+            asset_phases=job.asset_phases,
+            created_at=str(job.created_at),
+            final_video_url=final_video_url
         )
     except HTTPException:
         raise
@@ -159,6 +249,7 @@ async def get_job_status(
 from typing import List, Dict, Optional
 class ConfirmStoryRequest(BaseModel):
     rewrite_instructions: Optional[str] = None
+    story_summary: Optional[str] = None
 
 @router.post("/jobs/{job_id}/confirm-story", response_model=JobStatusResponse)
 async def confirm_story_context(
@@ -182,7 +273,11 @@ async def confirm_story_context(
 
         # 1. Update Story Summary
         final_asset_order = job.proposed_asset_order
-        if request.rewrite_instructions and request.rewrite_instructions.strip() not in ["", "string"]:
+        if request.story_summary and request.story_summary.strip() != "" and request.story_summary.strip() != job.story_summary.strip():
+            job.story_summary = request.story_summary
+            # CRITICAL: The old proposed asset order is now stale!
+            final_asset_order = []
+        elif request.rewrite_instructions and request.rewrite_instructions.strip() not in ["", "string"]:
             from app.services.llm_service import rewrite_story_summary
             import logging
             logging.info(f"Rewriting story based on user instructions: {request.rewrite_instructions}")

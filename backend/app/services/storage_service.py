@@ -80,10 +80,28 @@ class StorageService:
         target_bucket = bucket or self.bucket_name
         try:
             self.s3_client.delete_object(Bucket=target_bucket, Key=object_key)
-            return True
         except ClientError as e:
-            logger.error(f"Failed to delete {object_key} from bucket {target_bucket}: {e}")
-            return False
+            logger.error(f"Error deleting key {object_key} from bucket {target_bucket}: {e}")
+
+    def delete_prefix(self, prefix: str, bucket: str = None):
+        target_bucket = bucket or self.bucket_name
+        try:
+            paginator = self.s3_client.get_paginator('list_objects_v2')
+            pages = paginator.paginate(Bucket=target_bucket, Prefix=prefix)
+            delete_us = []
+            for page in pages:
+                if 'Contents' in page:
+                    for obj in page['Contents']:
+                        delete_us.append({'Key': obj['Key']})
+            if delete_us:
+                for i in range(0, len(delete_us), 1000):
+                    self.s3_client.delete_objects(
+                        Bucket=target_bucket,
+                        Delete={'Objects': delete_us[i:i+1000]}
+                    )
+        except ClientError as e:
+            logger.error(f"Error deleting prefix {prefix} from bucket {target_bucket}: {e}")
+
 
 storage_service = StorageService()
 
