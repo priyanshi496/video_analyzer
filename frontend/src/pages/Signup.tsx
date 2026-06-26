@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/auth';
 import { Sparkles, Mail, Lock, ArrowRight, Loader2, User } from 'lucide-react';
 
-export default function Login() {
+export default function Signup() {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -16,6 +16,8 @@ export default function Login() {
     setLoading(true);
 
     try {
+      await authService.register(email, password);
+      // Auto-login after registration
       const data = await authService.login(email, password);
       localStorage.setItem('token', data.access_token);
       navigate('/');
@@ -52,10 +54,10 @@ export default function Login() {
             </div>
 
             <h2 className="text-2xl font-bold tracking-tight text-slate-900">
-              Welcome back
+              Create Account
             </h2>
             <p className="mt-1.5 text-xs text-slate-500">
-              Sign in to continue creating with AI
+              Sign up to start creating videos with AI
             </p>
           </div>
 
@@ -95,7 +97,7 @@ export default function Login() {
                   id="password"
                   name="password"
                   type="password"
-                  autoComplete="current-password"
+                  autoComplete="new-password"
                   required
                   className="w-full bg-transparent pl-3 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none"
                   placeholder="Password"
@@ -114,11 +116,11 @@ export default function Login() {
               {loading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Signing in...
+                  Creating account...
                 </>
               ) : (
                 <>
-                  Sign In
+                  Get Started
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}
@@ -131,15 +133,15 @@ export default function Login() {
               <div className="flex-1 h-px bg-slate-100" />
             </div>
 
-            {/* Signup Link */}
+            {/* Login Link */}
             <button
               type="button"
               className="w-full text-xs text-slate-500 hover:text-slate-800 transition-colors py-1"
-              onClick={() => navigate('/signup')}
+              onClick={() => navigate('/login')}
             >
-              Don't have an account?{' '}
+              Already have an account?{' '}
               <span className="text-orange-600 hover:text-orange-500 font-semibold ml-0.5">
-                Create one
+                Sign in
               </span>
             </button>
           </form>

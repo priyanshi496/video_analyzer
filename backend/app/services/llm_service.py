@@ -275,7 +275,12 @@ def call_openrouter_multiimage(
         content.append({"type": "image_url", "image_url": {"url": to_data_url(p)}})
 
     headers = _build_headers(api_key)
-    models_to_try = [model, "google/gemini-3.5-flash"]
+    models_to_try = [
+        model, 
+        "google/gemini-3.5-flash", 
+        "google/gemini-flash-1.5:free",
+        "meta-llama/llama-3.2-11b-vision-instruct:free"
+    ]
     last_err = None
 
     for model_name in models_to_try:
@@ -312,7 +317,11 @@ def call_openrouter_text(prompt: str, model: str, fallbacks: list = None, temper
     api_key = settings.OPENROUTER_API_KEY
     headers = _build_headers(api_key)
     if fallbacks is None:
-        fallbacks = ["openai/gpt-3.5-turbo", "google/gemini-flash-1.5-8b"]
+        fallbacks = [
+            "google/gemini-flash-1.5-8b:free",
+            "meta-llama/llama-3-8b-instruct:free",
+            "google/gemini-flash-1.5:free"
+        ]
     models_to_try = [model] + fallbacks
     last_err = None
 

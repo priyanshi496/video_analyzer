@@ -17,21 +17,21 @@ export function Sidebar({ isOpen, onToggle }: { isOpen: boolean; onToggle: () =>
   ];
 
   return (
-    <aside className={`fixed left-0 top-0 bottom-0 bg-surface-900 border-r border-surface-800 flex flex-col z-40 transition-all duration-300 ${isOpen ? 'w-64' : 'w-20'}`}>
+    <aside className={`hidden sm:flex fixed left-0 top-0 bottom-0 bg-white border-r border-slate-100 flex flex-col z-40 transition-all duration-300 ${isOpen ? 'w-64' : 'w-20'}`}>
       {/* Logo & Toggle */}
-      <div className={`h-16 flex items-center border-b border-surface-800 ${isOpen ? 'px-6 justify-between' : 'justify-center'}`}>
+      <div className={`h-16 flex items-center border-b border-slate-100 ${isOpen ? 'px-6 justify-between' : 'justify-center'}`}>
         <div className="flex items-center gap-3 overflow-hidden">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center flex-shrink-0 shadow-lg shadow-primary-500/20">
             <Sparkles className="w-5 h-5 text-white" />
           </div>
           {isOpen && (
-            <span className="text-lg font-semibold text-white tracking-tight flex-shrink-0">
-              ReelForge<span className="text-primary-400">AI</span>
+            <span className="text-lg font-semibold text-slate-800 tracking-tight flex-shrink-0">
+              ReelForge<span className="text-primary-500">AI</span>
             </span>
           )}
         </div>
         {isOpen && (
-          <button onClick={onToggle} className="p-1.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors">
+          <button onClick={onToggle} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition-colors">
             <Menu className="w-5 h-5" />
           </button>
         )}
@@ -39,7 +39,7 @@ export function Sidebar({ isOpen, onToggle }: { isOpen: boolean; onToggle: () =>
 
       {!isOpen && (
         <div className="pt-4 flex justify-center">
-          <button onClick={onToggle} className="p-2 rounded-xl text-surface-400 hover:text-white hover:bg-surface-800 transition-colors">
+          <button onClick={onToggle} className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition-colors">
             <Menu className="w-5 h-5" />
           </button>
         </div>
@@ -57,12 +57,12 @@ export function Sidebar({ isOpen, onToggle }: { isOpen: boolean; onToggle: () =>
                 w-full flex items-center ${isOpen ? 'gap-3 px-3 py-2.5' : 'justify-center py-3'} rounded-xl
                 transition-all duration-200
                 ${currentPath === item.path || (item.path === '/project' && currentPath.startsWith('/project'))
-                  ? 'bg-primary-500/10 text-white border border-primary-500/20'
-                  : 'text-surface-400 hover:text-white hover:bg-surface-800'}
+                  ? 'bg-primary-50/70 text-primary-600 border border-primary-100/50'
+                  : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}
               `}
             >
               <item.icon className="w-5 h-5 flex-shrink-0" />
-              {isOpen && <span className="font-medium">{item.label}</span>}
+              {isOpen && <span className="font-semibold">{item.label}</span>}
             </button>
           ))}
         </div>
@@ -74,10 +74,10 @@ export function Sidebar({ isOpen, onToggle }: { isOpen: boolean; onToggle: () =>
           <button
             key={item.id}
             title={!isOpen ? item.label : undefined}
-            className={`w-full flex items-center ${isOpen ? 'gap-3 px-3 py-2.5' : 'justify-center py-3'} rounded-xl text-surface-400 hover:text-white hover:bg-surface-800 transition-all duration-200`}
+            className={`w-full flex items-center ${isOpen ? 'gap-3 px-3 py-2.5' : 'justify-center py-3'} rounded-xl text-slate-500 hover:text-slate-700 hover:bg-slate-50 transition-all duration-200`}
           >
             <item.icon className="w-5 h-5 flex-shrink-0" />
-            {isOpen && <span className="font-medium">{item.label}</span>}
+            {isOpen && <span className="font-semibold">{item.label}</span>}
           </button>
         ))}
       </div>

@@ -49,8 +49,8 @@ class Project(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
-    media_assets = relationship("MediaAsset", back_populates="project")
-    analysis_jobs = relationship("AnalysisJob", back_populates="project")
+    media_assets = relationship("MediaAsset", back_populates="project", cascade="all, delete-orphan")
+    analysis_jobs = relationship("AnalysisJob", back_populates="project", cascade="all, delete-orphan")
     user = relationship("User", back_populates="projects")
 
 
@@ -108,7 +108,7 @@ class AnalysisJob(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
     project = relationship("Project", back_populates="analysis_jobs")
-    analyzed_clips = relationship("AnalyzedClip", back_populates="job")
+    analyzed_clips = relationship("AnalyzedClip", back_populates="job", cascade="all, delete-orphan")
 
 class AnalyzedClip(Base):
     __tablename__ = "analyzed_clips"

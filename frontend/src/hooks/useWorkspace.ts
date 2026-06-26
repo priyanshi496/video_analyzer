@@ -81,12 +81,10 @@ export function useWorkspace(projectId: string) {
     try {
       const payload = {
         vibe: config.vibe,
-        directives: config.directives,
+        directives: config.directives || '',
         music: { 
           mode: config.musicMode, 
-          // If custom mode is selected, we need a query. The AI mockup didn't have a separate input for this, 
-          // but we can pass directives or empty if not provided.
-          custom_query: config.musicMode === 'custom' ? config.directives : null,
+          custom_query: config.musicMode === 'custom' ? config.songQuery : null,
           instrumental: config.instrumentalOnly 
         }
       };
@@ -123,6 +121,19 @@ export function useWorkspace(projectId: string) {
     setJob(null);
   };
 
+  const renameProject = async (newName: string) => {
+    if (!projectId) return;
+    try {
+      const updated = await projectService.updateProject(projectId, newName);
+      setProject(updated);
+      return updated;
+    } catch (err) {
+      console.error('Failed to rename project:', err);
+      alert('Failed to rename project.');
+      throw err;
+    }
+  };
+
   return {
     project,
     mediaAssets,
@@ -135,5 +146,6 @@ export function useWorkspace(projectId: string) {
     startGeneration,
     confirmStory,
     resetJob,
+    renameProject,
   };
 }

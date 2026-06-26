@@ -233,3 +233,32 @@ async def list_media(
 
     return response
 
+
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_project(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Verify project exists and belongs to the user (or is unowned)
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            or_(Project.user_id == current_user.id, Project.user_id == None)
+        )
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Delete project media files from MinIO
+    try:
+        await asyncio.to_thread(storage_service.delete_prefix, f"projects/{project_id}/")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to delete MinIO prefix for project {project_id}: {e}")
+
+    await db.delete(project)
+    await db.commit()
+
+

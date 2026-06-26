@@ -22,6 +22,11 @@ export const projectService = {
     return response.data;
   },
 
+  async updateProject(id: string, name: string) {
+    const response = await api.patch(`/projects/${id}`, { name });
+    return response.data;
+  },
+
   async getProject(id: string) {
     const response = await api.get(`/projects/${id}`);
     return response.data;
@@ -67,5 +72,11 @@ export const projectService = {
   async confirmStory(jobId: string, payload: any) {
     const response = await api.post(`/jobs/${jobId}/confirm-story`, payload);
     return response.data;
+  },
+
+  async deleteProject(id: string) {
+    const response = await api.delete(`/projects/${id}`);
+    return response.data;
   }
 };
+

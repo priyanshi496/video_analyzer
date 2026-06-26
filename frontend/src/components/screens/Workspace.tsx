@@ -12,6 +12,7 @@ import {
   Volume2,
   Film,
   X,
+  Maximize2,
 } from 'lucide-react';
 import { useWorkspace } from '../../hooks/useWorkspace';
 import { vibeOptions, musicModeOptions } from '../../lib/utils';
@@ -24,7 +25,7 @@ type ChatPhase =
   | 'upload'       // no media yet
   | 'vibe'         // asking vibe preference
   | 'music'        // asking music mode
-  | 'directives'   // optional instructions
+  | 'song_query'   // custom song text input
   | 'processing'   // PENDING / RUNNING
   | 'story'        // STORY_PROPOSED
   | 'rendering'    // confirmed story, rendering
@@ -36,17 +37,89 @@ interface ConfigState {
   musicMode: GenerationConfig['musicMode'];
   instrumentalOnly: boolean;
   directives: string;
+  songQuery: string;
 }
 
-const processingMessages = [
+const analysisMessages = [
+  'Looking at your pics...',
+  'Wow, so beautiful!',
+  'Analyzing quality...',
+  'Oh, this one is a lil shaky...',
+  'Finding the perfect highlights...',
+  'Scanning for the best frames...',
+  'This is going to look amazing...',
+  'Going through your clips...',
+  'Taking it all in...',
+  'Okay, what do we have here...',
+  'Checking the quality...',
+  'Is this one sharp enough...',
+  'A little blurry, but salvageable...',
+  'This one is steady, nice...',
+  'Hmm, bit shaky on this clip...',
+  'Stabilizing in my head...',
+  'Rating each shot...',
+  'Sorting the good from the meh...',
+  'Hmm, interesting...',
+  'Flipping through everything...',
+  'Reading the room...',
+  'Getting the full picture...',
+  'Noting the details...',
+ 'Flagging the wobbly ones...',
+  'Checking for motion blur...',
+  'Some of these are really sharp...',
+  'Filtering out the rough ones...',
+  'Keeping only the good stuff...',
+  'Quality check, almost done...',
+  'Getting a feel for the vibe...',
+  'Understanding the story...',
+  'Almost have a sense of it...',
+  'Just need a moment more...',
+];
+
+const renderMessages = [
+  'Analyzing your best moments.',
+  'Finding the perfect sequence.',
   'Generating script.',
   'Cooking up your next viral cut.',
   'Syncing vibe, voice, and visuals.',
-  'Analyzing your best moments.',
   'Stitching the story together.',
   'Matching beats to your clips.',
-  'Finding the perfect sequence.',
+  'Laying down the timeline...',
+  'Cutting to the good parts...',
+  'Sequencing the shots...',
+  'Locking in the transitions...',
+  'Rendering frame by frame...',
+  'Building the final cut...',
+  'Mixing the audio...',
+  'Syncing the music drop...',
+  'Polishing every second...',
+  'Adding the finishing layers...',
+  'Encoding the magic...',
+  'Almost out of the oven...',
+  'Final render in progress...',
+  'Exporting your masterpiece...',
+  'Putting the bow on it...',
+  'This one slaps, trust.',
+  'Done is near.',
 ];
+
+const triggerDownload = async (url: string, filename: string = 'reel.mp4') => {
+  try {
+    const response = await fetch(url);
+    const blob = await response.blob();
+    const blobUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(blobUrl);
+  } catch (err) {
+    console.error('Download failed:', err);
+    window.open(url, '_blank');
+  }
+};
 
 export function Workspace() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -65,22 +138,44 @@ export function Workspace() {
     startGeneration,
     confirmStory,
     resetJob,
+    renameProject,
   } = useWorkspace(projectId || '');
 
   const pastJobs = jobHistory?.filter((h: any) => h.id !== job?.id && h.status === 'COMPLETED') || [];
 
   const [chatPhase, setChatPhase] = useState<ChatPhase>('upload');
   const [showPastReels, setShowPastReels] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [tempName, setTempName] = useState('');
   const [config, setConfig] = useState<ConfigState>({
     vibe: 'cinematic',
     musicMode: 'ai-catalog',
     instrumentalOnly: false,
     directives: '',
+    songQuery: '',
   });
   const [rewriteInstruction, setRewriteInstruction] = useState('');
   const [editingStory, setEditingStory] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [inputText, setInputText] = useState('');
+  const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null);
+
+  const handleStartRename = () => {
+    setTempName(project?.name || '');
+    setIsEditingName(true);
+  };
+
+  const handleSaveRename = async () => {
+    const trimmed = tempName.trim();
+    if (trimmed && trimmed !== project?.name) {
+      try {
+        await renameProject(trimmed);
+      } catch (e) {
+        // ignore/revert
+      }
+    }
+    setIsEditingName(false);
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -90,6 +185,17 @@ export function Workspace() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatPhase, job?.status]);
+
+  // Lock body scroll when any modal is open
+  useEffect(() => {
+    const isModalOpen = showPastReels || !!activePreviewUrl;
+    if (isModalOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [showPastReels, activePreviewUrl]);
 
   // Advance phase after first upload
   useEffect(() => {
@@ -102,18 +208,20 @@ export function Workspace() {
   useEffect(() => {
     if (!job) return;
 
-    if (job.status === 'PENDING' || (job.status === 'RUNNING' && chatPhase !== 'rendering')) {
-      setChatPhase('processing');
+    if (job.status === 'PENDING' || job.status === 'RUNNING') {
+      if (job.story_summary) {
+        setChatPhase('rendering');
+      } else {
+        setChatPhase('processing');
+      }
     } else if (job.status === 'STORY_PROPOSED') {
       setChatPhase('story');
-    } else if (job.status === 'RUNNING' && chatPhase === 'rendering') {
-      // stay in rendering
     } else if (job.status === 'COMPLETED') {
       setChatPhase('complete');
     } else if (job.status === 'FAILED') {
       setChatPhase('failed');
     }
-  }, [job?.status]);
+  }, [job?.status, job?.story_summary]);
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -131,23 +239,31 @@ export function Workspace() {
   };
 
   const handleMusicSelect = (musicMode: ConfigState['musicMode']) => {
-    setConfig(prev => ({ ...prev, musicMode }));
-    setTimeout(() => setChatPhase('directives'), 400);
+    setConfig(prev => {
+      const updated = { ...prev, musicMode };
+      if (musicMode !== 'custom') {
+        // Start generation directly!
+        startGeneration(updated);
+        setTimeout(() => setChatPhase('processing'), 400);
+      } else {
+        // Go to custom song query text input phase
+        setTimeout(() => setChatPhase('song_query'), 400);
+      }
+      return updated;
+    });
   };
 
-  const handleStartGeneration = async (directives = '') => {
-    setConfig(prev => ({ ...prev, directives }));
-    const finalConfig: GenerationConfig = { ...config, directives };
-    await startGeneration(finalConfig);
-  };
-
-  const handleSkipDirectives = () => {
-    handleStartGeneration('');
-  };
-
-  const handleSendDirectives = () => {
-    handleStartGeneration(inputText.trim());
+  const handleSendSongQuery = () => {
+    const query = inputText.trim();
+    if (!query) return;
     setInputText('');
+    
+    setConfig(prev => {
+      const updated = { ...prev, songQuery: query };
+      startGeneration(updated);
+      return updated;
+    });
+    setChatPhase('processing');
   };
 
   const handleConfirmStory = async () => {
@@ -186,7 +302,7 @@ export function Workspace() {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-transparent overflow-hidden min-h-0">
+    <div className="flex-1 flex flex-col bg-[#F2F1EC] relative overflow-hidden min-h-0">
       <input
         ref={fileInputRef}
         type="file"
@@ -204,10 +320,39 @@ export function Workspace() {
         >
           <ArrowLeft className="w-4 h-4 text-surface-700" />
         </button>
-        <span className="text-sm font-medium text-surface-600 truncate max-w-[200px]">
-          {project?.name || 'Project'}
-        </span>
-        <button 
+        {isEditingName ? (
+          <div className="flex-1 max-w-[220px] mx-2 flex items-center gap-1.5 bg-white border border-orange-300 rounded-full px-3 py-1 shadow-sm animate-scale-in">
+            <input
+              type="text"
+              value={tempName}
+              onChange={(e) => setTempName(e.target.value)}
+              onBlur={handleSaveRename}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSaveRename();
+                if (e.key === 'Escape') setIsEditingName(false);
+              }}
+              autoFocus
+              className="w-full bg-transparent text-sm font-semibold text-slate-850 focus:outline-none text-center"
+              maxLength={50}
+            />
+            <button
+              onClick={handleSaveRename}
+              className="p-0.5 text-orange-500 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors cursor-pointer"
+            >
+              <Check className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={handleStartRename}
+            className="flex items-center gap-1.5 text-sm font-semibold text-surface-700 hover:text-orange-500 hover:bg-white/65 hover:shadow-sm px-3.5 py-1.5 rounded-full transition-all max-w-[220px] min-w-0 truncate group cursor-pointer"
+            title="Rename Project"
+          >
+            <span className="truncate">{project?.name || 'Project'}</span>
+            <Pencil className="w-3 h-3 text-surface-450 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+          </button>
+        )}
+        <button
           onClick={() => setShowPastReels(true)}
           className="w-9 h-9 rounded-full bg-surface-200/80 flex items-center justify-center hover:bg-surface-300/80 transition-colors"
         >
@@ -217,7 +362,7 @@ export function Workspace() {
 
       {/* Past Reels Modal */}
       {showPastReels && (
-        <div className="absolute inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm max-h-[80vh] flex flex-col overflow-hidden animate-slide-up">
             <div className="px-5 py-4 border-b border-surface-200 flex items-center justify-between bg-surface-50">
               <h3 className="text-lg font-semibold text-surface-900 flex items-center gap-2">
@@ -233,12 +378,15 @@ export function Workspace() {
                 <div key={pastJob.id} className="bg-white rounded-xl p-3 flex gap-3 items-center border border-surface-200 hover:border-orange-200 transition-colors shadow-sm">
                   <div className="w-20 h-14 bg-black rounded-lg overflow-hidden relative flex-shrink-0">
                     {pastJob.final_video_url ? (
-                      <a href={pastJob.final_video_url} target="_blank" rel="noreferrer" className="absolute inset-0 block group/video">
+                      <button
+                        onClick={() => setActivePreviewUrl(pastJob.final_video_url)}
+                        className="absolute inset-0 block group/video w-full h-full text-left cursor-pointer"
+                      >
                         <video src={pastJob.final_video_url + "#t=0.1"} preload="metadata" className="w-full h-full object-cover group-hover/video:scale-105 transition-transform duration-300" />
                         <div className="absolute inset-0 bg-black/20 group-hover/video:bg-black/10 transition-colors flex items-center justify-center">
-                          <Film className="w-4 h-4 text-white opacity-0 group-hover/video:opacity-100 transition-opacity" />
+                          <Film className="w-4 h-4 text-white opacity-100 transition-opacity" />
                         </div>
-                      </a>
+                      </button>
                     ) : (
                       <div className="absolute inset-0 flex items-center justify-center bg-surface-100">
                         <Film className="w-5 h-5 text-surface-300" />
@@ -250,9 +398,13 @@ export function Workspace() {
                     <p className="text-xs text-surface-500 truncate">{new Date(pastJob.created_at).toLocaleDateString()}</p>
                   </div>
                   {pastJob.final_video_url && (
-                    <a href={pastJob.final_video_url} download title="Download Reel" className="p-2 rounded-lg bg-surface-100 text-surface-600 hover:bg-orange-50 hover:text-orange-600 transition-colors">
+                    <button
+                      onClick={() => triggerDownload(pastJob.final_video_url)}
+                      title="Download Reel"
+                      className="p-2 rounded-lg bg-surface-100 text-surface-600 hover:bg-orange-50 hover:text-orange-600 transition-colors cursor-pointer"
+                    >
                       <Download className="w-4 h-4" />
-                    </a>
+                    </button>
                   )}
                 </div>
               )) : (
@@ -272,6 +424,7 @@ export function Workspace() {
           onPickFiles={() => fileInputRef.current?.click()}
           uploading={uploading}
           pastJobs={pastJobs}
+          onPreviewReel={setActivePreviewUrl}
         />
       )}
 
@@ -291,7 +444,7 @@ export function Workspace() {
               />
 
               {/* === Vibe question === */}
-              {['vibe', 'music', 'directives', 'processing', 'story', 'rendering', 'complete', 'failed'].includes(chatPhase) && (
+              {['vibe', 'music', 'song_query', 'processing', 'story', 'rendering', 'complete', 'failed'].includes(chatPhase) && (
                 <ChatQuestion
                   question="What vibe are you going for?"
                   answered={chatPhase !== 'vibe'}
@@ -315,7 +468,7 @@ export function Workspace() {
               )}
 
               {/* === Music question === */}
-              {['music', 'directives', 'processing', 'story', 'rendering', 'complete', 'failed'].includes(chatPhase) && (
+              {['music', 'song_query', 'processing', 'story', 'rendering', 'complete', 'failed'].includes(chatPhase) && (
                 <ChatQuestion
                   question="What about background music?"
                   answered={chatPhase !== 'music'}
@@ -341,40 +494,17 @@ export function Workspace() {
                 </ChatQuestion>
               )}
 
-              {/* === Directives / story brief === */}
-              {['directives', 'processing', 'story', 'rendering', 'complete', 'failed'].includes(chatPhase) && (
+              {/* === Custom Song Query question === */}
+              {['song_query', 'processing', 'story', 'rendering', 'complete', 'failed'].includes(chatPhase) && config.musicMode === 'custom' && (
                 <ChatQuestion
-                  question="Any story or instructions for the AI? (optional)"
-                  answered={chatPhase !== 'directives'}
-                  answeredValue={config.directives || 'Skipped — AI decides'}
-                >
-                  {chatPhase === 'directives' && (
-                    <div className="mt-3 flex gap-2">
-                      <button
-                        onClick={handleSkipDirectives}
-                        className="px-5 py-2 rounded-full bg-white border border-surface-200 shadow-sm hover:border-orange-400 text-sm text-surface-600 font-medium transition-all duration-200 active:scale-95"
-                      >
-                        Skip
-                      </button>
-                      <button
-                        onClick={handleSendDirectives}
-                        disabled={!inputText.trim()}
-                        className="px-5 py-2 rounded-full bg-orange-600 text-white text-sm font-medium shadow-sm disabled:opacity-40 hover:bg-orange-700 transition-all duration-200 active:scale-95"
-                      >
-                        Use my story
-                      </button>
-                    </div>
-                  )}
-                </ChatQuestion>
-              )}
-
-              {/* === Processing messages === */}
-              {(chatPhase === 'processing' || chatPhase === 'rendering') && (
-                <ProcessingBubble />
+                  question="Which song or artist would you like to search for?"
+                  answered={chatPhase !== 'song_query'}
+                  answeredValue={config.songQuery}
+                />
               )}
 
               {/* === Story review card === */}
-              {['story', 'rendering', 'complete', 'failed'].includes(chatPhase) && job?.story_summary && (
+              {['story', 'processing', 'rendering', 'complete', 'failed'].includes(chatPhase) && job?.story_summary && (
                 <StoryCard
                   story={job.story_summary}
                   instruction={rewriteInstruction}
@@ -391,9 +521,21 @@ export function Workspace() {
                 />
               )}
 
+              {/* === Processing messages === */}
+              {chatPhase === 'processing' && (
+                <ProcessingBubble messages={analysisMessages} />
+              )}
+              {chatPhase === 'rendering' && (
+                <ProcessingBubble messages={renderMessages} />
+              )}
+
               {/* === Complete: video player === */}
               {chatPhase === 'complete' && job?.final_video_url && (
-                <CompletedCard url={job.final_video_url} onReset={handleResetAll} />
+                <CompletedCard 
+                  url={job.final_video_url} 
+                  onReset={handleResetAll} 
+                  onPreview={() => setActivePreviewUrl(job.final_video_url)} 
+                />
               )}
 
               {/* === Failed === */}
@@ -410,10 +552,46 @@ export function Workspace() {
             phase={chatPhase}
             value={inputText}
             onChange={setInputText}
-            onSend={handleSendDirectives}
+            onSend={
+              chatPhase === 'song_query' ? handleSendSongQuery : () => {}
+            }
             onAddFiles={() => fileInputRef.current?.click()}
           />
         </>
+      )}
+
+      {/* ── Custom Fullscreen Video Popup ── */}
+      {activePreviewUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+          {/* Modal Container */}
+          <div className="bg-white rounded-3xl border border-orange-100 shadow-2xl w-full max-w-[360px] flex flex-col overflow-hidden animate-scale-in">
+            {/* Header */}
+            <div className="px-5 py-3 border-b border-orange-50 flex items-center justify-between bg-orange-50/30">
+              <span className="text-xs font-bold text-slate-800 tracking-wide uppercase">Preview Reel</span>
+              <button 
+                onClick={() => setActivePreviewUrl(null)} 
+                className="w-7 h-7 rounded-full bg-white hover:bg-orange-50 text-orange-500 flex items-center justify-center border border-orange-100 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            
+            {/* Video Box - Portrait Only (9:16) */}
+            <div className="aspect-[9/16] bg-slate-950 w-full relative">
+              <video src={activePreviewUrl} controls autoPlay className="w-full h-full object-contain" />
+            </div>
+            
+            {/* Footer */}
+            <div className="p-3.5 flex items-center justify-end bg-slate-50/50 border-t border-slate-100">
+              <button
+                onClick={() => setActivePreviewUrl(null)}
+                className="px-5 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full text-[11px] font-bold shadow-md shadow-orange-500/10 active:scale-95 transition-all cursor-pointer"
+              >
+                Close Preview
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -421,7 +599,7 @@ export function Workspace() {
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
-function UploadPhase({ onPickFiles, uploading, pastJobs = [] }: { onPickFiles: () => void; uploading: boolean; pastJobs?: any[] }) {
+function UploadPhase({ onPickFiles, uploading, pastJobs = [], onPreviewReel }: { onPickFiles: () => void; uploading: boolean; pastJobs?: any[]; onPreviewReel: (url: string) => void }) {
   const [dragActive, setDragActive] = useState(false);
 
   return (
@@ -491,19 +669,22 @@ function UploadPhase({ onPickFiles, uploading, pastJobs = [] }: { onPickFiles: (
                 {/* Thumbnail */}
                 <div className="w-24 h-16 bg-black rounded-lg overflow-hidden relative flex-shrink-0">
                   {pastJob.final_video_url ? (
-                    <a href={pastJob.final_video_url} target="_blank" rel="noreferrer" className="absolute inset-0 block group/video">
-                      <video src={pastJob.final_video_url + "#t=0.1"} preload="metadata" className="w-full h-full object-cover group-hover/video:scale-105 transition-transform duration-300" />
-                      <div className="absolute inset-0 bg-black/20 group-hover/video:bg-black/10 transition-colors flex items-center justify-center">
-                        <Film className="w-6 h-6 text-white opacity-0 group-hover/video:opacity-100 transition-opacity" />
-                      </div>
-                    </a>
+                  <button
+                    onClick={() => onPreviewReel(pastJob.final_video_url)}
+                    className="absolute inset-0 block group/video w-full h-full text-left cursor-pointer"
+                  >
+                    <video src={pastJob.final_video_url + "#t=0.1"} preload="metadata" className="w-full h-full object-cover group-hover/video:scale-105 transition-transform duration-300" />
+                    <div className="absolute inset-0 bg-black/20 group-hover/video:bg-black/10 transition-colors flex items-center justify-center">
+                      <Film className="w-6 h-6 text-white opacity-100 transition-opacity" />
+                    </div>
+                  </button>
                   ) : (
                     <div className="absolute inset-0 flex items-center justify-center bg-surface-100">
                       <Film className="w-6 h-6 text-surface-300" />
                     </div>
                   )}
                 </div>
-                
+
                 {/* Info */}
                 <div className="flex-1 min-w-0 text-left">
                   <p className="text-sm font-medium text-surface-900 capitalize mb-1">
@@ -517,14 +698,13 @@ function UploadPhase({ onPickFiles, uploading, pastJobs = [] }: { onPickFiles: (
                 {/* Actions */}
                 {pastJob.final_video_url && (
                   <div className="flex items-center gap-2">
-                    <a
-                      href={pastJob.final_video_url}
-                      download
+                    <button
+                      onClick={() => triggerDownload(pastJob.final_video_url)}
                       title="Download Reel"
-                      className="p-2 rounded-lg bg-surface-100 text-surface-600 hover:bg-orange-50 hover:text-orange-600 transition-colors"
+                      className="p-2 rounded-lg bg-surface-100 text-surface-600 hover:bg-orange-50 hover:text-orange-600 transition-colors cursor-pointer"
                     >
                       <Download className="w-4 h-4" />
-                    </a>
+                    </button>
                   </div>
                 )}
               </div>
@@ -581,19 +761,19 @@ function MediaGrid({
             </div>
           ))}
 
-        {/* Add more tile */}
-        {!locked && (
-          <button
-            onClick={onAddMore}
-            disabled={uploading}
-            className="w-20 h-20 rounded-xl border-2 border-dashed border-surface-300 flex items-center justify-center hover:border-orange-400 hover:bg-white/50 transition-all duration-200 bg-white/30"
-          >
-            {uploading
-              ? <div className="w-4 h-4 border border-surface-300 border-t-orange-500 rounded-full animate-spin" />
-              : <Plus className="w-5 h-5 text-surface-400" />
-            }
-          </button>
-        )}
+          {/* Add more tile */}
+          {!locked && (
+            <button
+              onClick={onAddMore}
+              disabled={uploading}
+              className="w-20 h-20 rounded-xl border-2 border-dashed border-surface-300 flex items-center justify-center hover:border-orange-400 hover:bg-white/50 transition-all duration-200 bg-white/30"
+            >
+              {uploading
+                ? <div className="w-4 h-4 border border-surface-300 border-t-orange-500 rounded-full animate-spin" />
+                : <Plus className="w-5 h-5 text-surface-400" />
+              }
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -631,20 +811,25 @@ function ChatQuestion({
   );
 }
 
-function ProcessingBubble() {
+function ProcessingBubble({ messages }: { messages: string[] }) {
   const [msgIndex, setMsgIndex] = useState(0);
   const [visible, setVisible] = useState(true);
+
+  // Reset index when message list changes
+  useEffect(() => {
+    setMsgIndex(0);
+  }, [messages]);
 
   useEffect(() => {
     const interval = setInterval(() => {
       setVisible(false);
       setTimeout(() => {
-        setMsgIndex(i => (i + 1) % processingMessages.length);
+        setMsgIndex(i => (i + 1) % messages.length);
         setVisible(true);
       }, 350);
     }, 2500);
     return () => clearInterval(interval);
-  }, []);
+  }, [messages]);
 
   return (
     <div className="animate-slide-up space-y-2 flex flex-col items-start w-full">
@@ -653,7 +838,7 @@ function ProcessingBubble() {
           className={`text-[15px] font-medium text-orange-600 transition-opacity duration-300 ${visible ? 'opacity-100' : 'opacity-0'}`}
           style={{ fontStyle: 'italic' }}
         >
-          {processingMessages[msgIndex]}
+          {messages[msgIndex]}
         </p>
       </div>
       <p className="text-xs text-surface-400 pl-1">
@@ -741,32 +926,55 @@ function StoryCard({
   );
 }
 
-function CompletedCard({ url, onReset }: { url: string; onReset: () => void }) {
+function CompletedCard({ url, onReset, onPreview }: { url: string; onReset: () => void; onPreview: () => void }) {
+  const [downloading, setDownloading] = useState(false);
+ 
+  const handleDownload = async () => {
+    setDownloading(true);
+    await triggerDownload(url);
+    setDownloading(false);
+  };
+ 
   return (
-    <div className="animate-slide-up space-y-4 max-w-[92%] md:max-w-[400px] flex flex-col items-start w-full">
-      <div className="bg-white rounded-2xl rounded-tl-sm shadow-sm overflow-hidden w-full">
-        <div className="aspect-video bg-surface-900">
+    <div className="animate-slide-up space-y-4 max-w-[92%] sm:max-w-[340px] flex flex-col items-center w-full mx-auto sm:mx-0">
+      <div className="bg-white rounded-3xl shadow-lg border border-orange-100/60 overflow-hidden w-full">
+        {/* Video Container - Portrait (9:16) */}
+        <div className="aspect-[9/16] bg-slate-950 relative group">
           <video src={url} controls className="w-full h-full object-contain" />
-        </div>
-        <div className="p-4 flex items-center justify-between">
-          <div>
-            <p className="text-sm font-semibold text-surface-900">Your reel is ready!</p>
-            <p className="text-xs text-surface-500 mt-0.5">Tap to watch or download</p>
-          </div>
-          <a
-            href={url}
-            download
-            className="flex items-center gap-1.5 px-4 py-2 bg-orange-600 text-white rounded-full text-sm font-medium hover:bg-orange-700 transition-colors"
+          
+          {/* Custom Fullscreen Trigger Button overlay */}
+          <button
+            onClick={onPreview}
+            className="absolute top-3 right-3 z-10 w-9 h-9 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 cursor-pointer"
+            title="Open Preview Popup"
           >
-            <Download className="w-3.5 h-3.5" />
+            <Maximize2 className="w-4 h-4 text-white" />
+          </button>
+        </div>
+        
+        <div className="p-4.5 flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-slate-900 truncate">Your reel is ready!</p>
+            <p className="text-[11px] font-semibold text-slate-400 mt-0.5">Tap to watch or download</p>
+          </div>
+          <button
+            onClick={handleDownload}
+            disabled={downloading}
+            className="flex items-center gap-1.5 px-4.5 py-2 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-400 text-white rounded-full text-xs font-bold shadow-md shadow-orange-500/10 active:scale-95 transition-all cursor-pointer flex-shrink-0"
+          >
+            {downloading ? (
+              <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            ) : (
+              <Download className="w-3.5 h-3.5" />
+            )}
             Save
-          </a>
+          </button>
         </div>
       </div>
-
+ 
       <button
         onClick={onReset}
-        className="flex items-center gap-2 px-4 py-2 rounded-full bg-white shadow-sm border border-surface-200 text-sm text-surface-600 hover:border-orange-400 transition-all"
+        className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white shadow-sm border border-slate-200 text-xs font-bold text-slate-600 hover:border-orange-400 hover:text-orange-500 transition-all cursor-pointer"
       >
         <RotateCcw className="w-3.5 h-3.5" />
         Make another version
@@ -807,7 +1015,7 @@ function ChatInputBar({
   onAddFiles: () => void;
 }) {
   const getPlaceholder = () => {
-    if (phase === 'directives') return 'Share your story, or leave it blank...';
+    if (phase === 'song_query') return 'Type your song or artist...';
     if (phase === 'story') return 'Type to edit...';
     if (phase === 'complete') return 'Ask for changes...';
     return 'Message...';
