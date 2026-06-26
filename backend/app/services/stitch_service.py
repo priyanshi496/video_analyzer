@@ -9,10 +9,23 @@ logger = logging.getLogger(__name__)
 
 
 def get_video_duration(video_path: str) -> float:
-    """Uses ffprobe to extract video duration, with cv2 fallback."""
+    """Uses OpenCV to mathematically compute exact video frame duration, with ffprobe fallback."""
+    import cv2
+    cap = cv2.VideoCapture(str(video_path))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    cap.release()
+    
+    # If OpenCV successfully calculates a valid duration, use it.
+    # This guarantees exact frame alignment for xfade transitions.
+    if fps > 0 and frame_count > 0:
+        return float(frame_count) / float(fps)
+        
+    # Fallback to FFprobe metadata container duration
     cmd = [
         "ffprobe", "-v", "error",
-        "-show_entries", "format=duration",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=duration",
         "-of", "default=noprint_wrappers=1:nokey=1",
         str(video_path)
     ]
@@ -22,14 +35,7 @@ def get_video_duration(video_path: str) -> float:
             return float(res.stdout.strip())
         except ValueError:
             pass
-    # Fallback to OpenCV
-    import cv2
-    cap = cv2.VideoCapture(str(video_path))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-    cap.release()
-    if fps > 0 and frame_count > 0:
-        return frame_count / fps
+
     raise ValueError(f"Could not read video duration for: {video_path}")
 
 
@@ -47,6 +53,76 @@ def has_audio_stream(video_path: str) -> bool:
         return "audio" in res.stdout
     except Exception:
         return False
+
+
+def get_video_dimensions(video_path: str) -> tuple[int, int]:
+    """Uses ffprobe to extract video width and height, with cv2 fallback."""
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=s=x:p=0",
+        str(video_path)
+    ]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout.strip():
+            w, h = map(int, res.stdout.strip().split('x'))
+            return w, h
+    except Exception:
+        pass
+    # Fallback to OpenCV
+    try:
+        import cv2
+        cap = cv2.VideoCapture(str(video_path))
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+        if w > 0 and h > 0:
+            return w, h
+    except Exception:
+        pass
+    return 1080, 1920
+
+
+def get_video_rotation_metadata(video_path: str) -> int:
+    """Reads the rotation tag from video metadata using ffprobe.
+    Returns 0 if no rotation tag is present (video is already in correct orientation).
+    This is deterministic and reliable, unlike LLM-based rotation guesses.
+    """
+    # Primary: stream-level 'rotate' tag (most common — used by iOS and Android)
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream_tags=rotate",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        str(video_path)
+    ]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout.strip():
+            return int(float(res.stdout.strip()))
+    except Exception:
+        pass
+
+    # Secondary: side_data rotation (used by newer encoders / some iPhones)
+    cmd2 = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream_side_data=rotation",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        str(video_path)
+    ]
+    try:
+        res2 = subprocess.run(cmd2, capture_output=True, text=True)
+        if res2.returncode == 0 and res2.stdout.strip():
+            # side_data rotation is negative by convention (e.g., -90 means 90° CW)
+            val = int(float(res2.stdout.strip()))
+            return (360 + val) % 360  # Normalize to 0–359
+    except Exception:
+        pass
+
+    return 0
 
 
 def trim_and_normalize_clip(
@@ -85,13 +161,69 @@ def trim_and_normalize_clip(
     if start_sec >= end_sec:
         raise ValueError(f"Reversed range: start_sec ({start_sec:.2f}s) >= end_sec ({end_sec:.2f}s).")
 
-    transpose_filter = ""
-    if rotation == 90:
-        transpose_filter = "transpose=1,"
-    elif rotation == 180:
-        transpose_filter = "transpose=1,transpose=1,"
-    elif rotation == 270:
-        transpose_filter = "transpose=2,"
+    # Determine effective display dimensions for landscape detection.
+    # Two types of landscape videos exist in the wild:
+    #
+    # Type A — Natively landscape (w > h, e.g. 1920x1080):
+    #   The pixel content IS already in the correct landscape orientation.
+    #   Some devices add a displaymatrix/side_data rotation (e.g. rotation=-90) that is
+    #   advisory metadata. FFmpeg's autorotate can INCORRECTLY apply this and rotate the
+    #   already-correct landscape content sideways. Fix: use -noautorotate for these files.
+    #
+    # Type B — Portrait-coded landscape (h > w, e.g. 1080x1920 with rotate=90 stream tag):
+    #   The pixel content is stored sideways (portrait-coded). The rotate tag tells players to
+    #   rotate it 90° to display as landscape. FFmpeg's autorotate handles this correctly.
+    #   Fix: keep autorotate enabled.
+    try:
+        w, h = get_video_dimensions(str(path_obj))
+        if is_image:
+            metadata_rotation = 0
+        else:
+            try:
+                metadata_rotation = get_video_rotation_metadata(str(path_obj))
+            except Exception:
+                metadata_rotation = 0
+        logger.debug(f"Detected rotation metadata for {Path(video_path).name}: {metadata_rotation}°, coded={w}x{h}")
+
+        # Type A: natively landscape — content already correct, disable autorotate
+        natively_landscape = (w > h) and not is_image
+
+        # Compute effective display dims:
+        # For Type A: already landscape, use w/h directly
+        # For Type B: portrait-coded with 90°/270° tag → autorotate flips to landscape
+        if natively_landscape:
+            effective_w, effective_h = w, h
+        elif metadata_rotation in (90, 270) and h > w:
+            effective_w, effective_h = h, w  # portrait-coded, autorotate will flip to landscape
+        else:
+            effective_w, effective_h = w, h
+
+        input_aspect = effective_w / effective_h
+        target_aspect = width / height
+        is_landscape = abs(input_aspect - target_aspect) >= 0.05
+        logger.debug(f"{Path(video_path).name}: effective={effective_w}x{effective_h} natively_landscape={natively_landscape} is_landscape={is_landscape}")
+    except Exception as e:
+        logger.warning(f"Failed to probe aspect ratio for {video_path}: {e}")
+        is_landscape = False
+        natively_landscape = False
+
+    if is_landscape:
+        # Content is (or will be after autorotate) in landscape orientation.
+        # Apply blurred background + centered overlay to fit into the portrait output frame.
+        vf_filter = (
+            f"split=2[bg][fg];"
+            f"[bg]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},"
+            f"gblur=sigma=20[bg_blurred];"
+            f"[fg]scale={width}:{height}:force_original_aspect_ratio=decrease[fg_scaled];"
+            f"[bg_blurred][fg_scaled]overlay=(W-w)/2:(H-h)/2,fps={fps}"
+        )
+    else:
+        # Portrait (9:16) or matching aspect ratio -> scale and pad normally
+        vf_filter = (
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
+            f"fps={fps}"
+        )
 
     if is_image:
         cmd = [
@@ -101,12 +233,7 @@ def trim_and_normalize_clip(
             "-f", "lavfi",
             "-i", "anullsrc=r=44100:cl=stereo",
             "-t", f"{dur:.3f}",
-            "-vf", (
-                f"{transpose_filter}"
-                f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
-                f"fps={fps}"
-            ),
+            "-vf", vf_filter,
             "-pix_fmt", "yuv420p",
             "-c:v", "libx264",
             "-preset", "fast",
@@ -114,6 +241,7 @@ def trim_and_normalize_clip(
             "-c:a", "aac",
             "-shortest",
             "-movflags", "+faststart",
+            "-metadata:s:v:0", "rotate=0",
             str(out_path),
         ]
     else:
@@ -127,18 +255,13 @@ def trim_and_normalize_clip(
             # Video input but no audio stream — synthesize a silent track
             cmd = [
                 "ffmpeg", "-y",
+            ] + [
                 "-ss", f"{start_sec:.3f}",
                 "-i", str(video_path),
                 "-f", "lavfi",
                 "-i", "anullsrc=r=44100:cl=stereo",
-                # -t placed here as an OUTPUT option, correctly limiting encoded duration
                 "-t", f"{dur:.3f}",
-                "-vf", (
-                    f"{transpose_filter}"
-                    f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                    f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
-                    f"fps={fps}"
-                ),
+                "-vf", vf_filter,
                 "-pix_fmt", "yuv420p",
                 "-map", "0:v:0",
                 "-map", "1:a:0",
@@ -150,20 +273,17 @@ def trim_and_normalize_clip(
                 "-ac", "2",
                 "-movflags", "+faststart",
                 "-avoid_negative_ts", "make_zero",
+                "-metadata:s:v:0", "rotate=0",
                 str(out_path),
             ]
         else:
             cmd = [
                 "ffmpeg", "-y",
+            ] + [
                 "-ss", f"{start_sec:.3f}",
                 "-i", str(video_path),
                 "-t", f"{dur:.3f}",
-                "-vf", (
-                    f"{transpose_filter}"
-                    f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                    f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
-                    f"fps={fps}"
-                ),
+                "-vf", vf_filter,
                 "-pix_fmt", "yuv420p",
                 "-c:v", "libx264",
                 "-preset", "fast",
@@ -173,6 +293,7 @@ def trim_and_normalize_clip(
                 "-ac", "2",
                 "-movflags", "+faststart",
                 "-avoid_negative_ts", "make_zero",
+                "-metadata:s:v:0", "rotate=0",
                 str(out_path),
             ]
 
@@ -181,6 +302,90 @@ def trim_and_normalize_clip(
         logger.error(f"FFmpeg command failed: {' '.join(cmd)}")
         logger.error(f"FFmpeg stderr output:\n{result.stderr}")
         raise RuntimeError(f"ffmpeg trim/normalize failed:\n{result.stderr}")
+    return str(out_path)
+
+
+def create_split_screen_clip(grouped_clips: list, out_path: str, width: int = 1080, height: int = 1920, fps: int = 30) -> str:
+    """Combines 2 or 3 clips into a vertically stacked split-screen video with a silent audio track."""
+    import subprocess
+    import logging
+    logger = logging.getLogger(__name__)
+
+    durations = [float(c["end_sec"]) - float(c["start_sec"]) for c in grouped_clips]
+    min_dur = min(durations)
+    n = len(grouped_clips)
+    
+    if n not in (2, 3):
+        # Fallback if AI groups too many
+        n = min(n, 3)
+        grouped_clips = grouped_clips[:3]
+        
+    sub_height = height // n
+    
+    inputs = []
+    for c in grouped_clips:
+        vp = str(c["video_path"])
+        # If the file is an image, we MUST loop it so FFmpeg reads it as a video stream instead of a 1-frame glitch
+        if vp.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.heic')):
+            inputs.extend(["-loop", "1", "-t", f"{min_dur:.3f}", "-i", vp])
+        else:
+            inputs.extend(["-ss", f"{float(c['start_sec']):.3f}", "-t", f"{min_dur:.3f}", "-i", vp])
+        
+    margin = 16
+    total_margin = (n - 1) * margin
+    sub_height = (height - total_margin) // n
+    
+    filter_complex = ""
+    current_y = 0
+    for i in range(n):
+        # Calculate precise height to avoid 1px rounding errors
+        if i == n - 1:
+            clip_h = height - current_y
+        else:
+            clip_h = sub_height
+            # Force even number for yuv420p compatibility to prevent 1918px height bugs
+            if clip_h % 2 != 0:
+                clip_h -= 1
+            
+        # Scale each input to completely fill width x clip_h, then crop any excess
+        filter_complex += f"[{i}:v]scale={width}:{clip_h}:force_original_aspect_ratio=increase,crop={width}:{clip_h},fps={fps}"
+        
+        # Add a white border at the bottom of the clip, except for the last clip
+        if i < n - 1:
+            filter_complex += f",pad={width}:{clip_h + margin}:0:0:white"
+            current_y += clip_h + margin
+            
+        filter_complex += f"[v{i}];"
+        
+    stack_inputs = "".join([f"[v{i}]" for i in range(n)])
+    filter_complex += f"{stack_inputs}vstack=inputs={n}[vout]"
+    
+    # We map the synthesized silent audio track to ensure xfade works downstream
+    cmd = [
+        "ffmpeg", "-y"
+    ] + inputs + [
+        "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+        "-t", f"{min_dur:.3f}",
+        "-filter_complex", filter_complex,
+        "-map", "[vout]",
+        "-map", f"{n}:a:0",
+        "-pix_fmt", "yuv420p",
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "23",
+        "-c:a", "aac",
+        "-ar", "44100",
+        "-ac", "2",
+        "-movflags", "+faststart",
+        "-avoid_negative_ts", "make_zero",
+        str(out_path)
+    ]
+    
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        logger.error(f"FFmpeg split screen failed:\n{res.stderr}")
+        raise RuntimeError(f"Split screen generation failed:\n{res.stderr}")
+        
     return str(out_path)
 
 
@@ -201,6 +406,7 @@ def _stitch_concat_demuxer(clip_paths: list, output_path) -> str:
         "-af",     "aresample=async=1",
         "-c:v",    "copy",
         "-c:a",    "aac",
+        "-metadata:s:v:0", "rotate=0",
         str(output_path),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -226,9 +432,15 @@ def stitch_clips(
     transition_durations: list = None,
 ) -> str:
     """
-    Concatenate pre-normalized clips into one final reel.
-    If transitions are provided, uses xfade/acrossfade complex filter graph.
-    Falls back to safe concat demuxer on error or if no transitions are requested.
+    Concatenate pre-normalized clips into one final reel using the safe concat demuxer.
+
+    The xfade/acrossfade filter_complex approach was removed because acrossfade is a
+    sequential blocking filter that reads ALL of stream-1 to EOF before outputting past
+    the crossfade point. When multiple clips are chained this causes hard freezes at
+    every clip boundary (visible as a frozen frame at ~6s, ~11s, etc.).
+
+    The original stitch.py used the simple concat demuxer with +genpts / aresample=async=1
+    which is reliable and freeze-free. We match that approach here.
     """
     if not clip_paths:
         raise RuntimeError("No clips available to stitch.")
@@ -334,10 +546,11 @@ def stitch_clips(
 
         # Bookend: Fade-out to black at end of last clip (video/audio)
         total_duration = round(cumulative_offset + durations[-1], 3)
-        fade_out_start = max(0.0, round(total_duration - 1.0, 3))
+        fade_out_start = max(0.0, round(total_duration - 2.0, 3))
+        fade_duration = min(1.5, round(total_duration - fade_out_start, 3))
         
-        video_filters.append(f"[vout_temp]fade=t=out:st={fade_out_start}:d=1.0[vout]")
-        audio_filters.append(f"[aout_temp]afade=t=out:st={fade_out_start}:d=1.0[aout]")
+        video_filters.append(f"[vout_temp]fade=t=out:st={fade_out_start}:d={fade_duration}[vout]")
+        audio_filters.append(f"[aout_temp]afade=t=out:st={fade_out_start}:d={fade_duration}[aout]")
 
         filter_complex = ";".join(video_filters + audio_filters)
 
@@ -354,6 +567,7 @@ def stitch_clips(
             "-c:a", "aac",
             "-ar", "44100",
             "-ac", "2",
+            "-t", str(total_duration),
             str(output_path)
         ])
 
@@ -389,75 +603,39 @@ def build_reel_from_segments(
         key=lambda x: x.get("story_position", 9999)
     )
 
-    # Auto-detect aspect ratio if defaults are requested
-    if width == 1080 and height == 1920:
-        landscape_count = 0
-        portrait_count = 0
-        import cv2
-        for seg in used_segments:
-            video_path = seg.get("video_path")
-            if not video_path:
-                continue
-            try:
-                is_image = Path(video_path).suffix.lower() in (".jpg", ".jpeg", ".png", ".heic")
-                if is_image:
-                    img = cv2.imread(video_path)
-                    if img is not None:
-                        h, w = img.shape[:2]
-                        if w >= h:
-                            landscape_count += 1
-                        else:
-                            portrait_count += 1
-                else:
-                    cap = cv2.VideoCapture(video_path)
-                    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    cap.release()
-                    if w > 0 and h > 0:
-                        if w >= h:
-                            landscape_count += 1
-                        else:
-                            portrait_count += 1
-            except Exception:
-                pass
-
-        if landscape_count >= portrait_count and landscape_count > 0:
-            width, height = 1920, 1080
-            logger.info(f"  📺 Detected landscape preference ({landscape_count} vs {portrait_count}). Output resolution set to 1920x1080.")
-        else:
-            width, height = 1080, 1920
-            logger.info(f"  📱 Detected portrait preference ({portrait_count} vs {landscape_count}). Output resolution set to 1080x1920.")
+    # Reels should always be portrait by default.
+    # We no longer auto-detect landscape preference because horizontal clips are now padded with blur.
 
     if clips_dir.exists():
         shutil.rmtree(clips_dir)
     clips_dir.mkdir(exist_ok=True)
     ordered_clip_paths = []
-    trim_failures      = []
 
     logger.info(f"\nTrimming {len(used_segments)} clip(s)...")
     for position, seg in enumerate(used_segments):
-        role      = seg.get("story_role", seg.get("narrative_role", "clip"))
-        src_stem  = Path(seg["video_path"]).stem
-        out_path  = clips_dir / f"clip_{position:02d}_{role}_{src_stem}.mp4"
-        try:
-            rot = seg.get("camera_rotation", 0)
-            trim_and_normalize_clip(seg["video_path"], seg["start_sec"], seg["end_sec"], out_path, width, height, fps, rot)
-            ordered_clip_paths.append(str(out_path))
-            logger.info(f"  [{position}] {role:8s} → {out_path.name}  "
-                  f"({seg['start_sec']}s–{seg['end_sec']}s from {Path(seg['video_path']).name})")
-        except Exception as e:
-            logger.info(f"  [{position}] ✗ Trim failed: {e}")
-            fallback = clips_dir / f"clip_{position:02d}_{role}_{src_stem}_FULL_FALLBACK.mp4"
+        role = seg.get("story_role", seg.get("narrative_role", "clip"))
+        
+        if seg.get("is_split_screen"):
+            out_path = clips_dir / f"clip_{position:02d}_{role}_split_screen.mp4"
             try:
-                shutil.copy(seg["video_path"], str(fallback))
-                ordered_clip_paths.append(str(fallback))
-                trim_failures.append(position)
-                logger.info(f"       → Fallback: full source copied as {fallback.name}")
-            except Exception as e2:
-                logger.info(f"       → Fallback copy also failed: {e2} — clip {position} dropped.")
+                create_split_screen_clip(seg["clips"], str(out_path), width, height, fps)
+                ordered_clip_paths.append(str(out_path))
+                logger.info(f"  [{position}] {role:8s} → {out_path.name}  (Split Screen of {len(seg['clips'])} clips)")
+            except Exception as e:
+                logger.info(f"  [{position}] ✗ Split Screen failed: {e}")
+        else:
+            src_stem  = Path(seg["video_path"]).stem
+            out_path  = clips_dir / f"clip_{position:02d}_{role}_{src_stem}.mp4"
+            try:
+                rot = seg.get("camera_rotation", 0)
+                trim_and_normalize_clip(seg["video_path"], seg["start_sec"], seg["end_sec"], out_path, width, height, fps, rot)
+                ordered_clip_paths.append(str(out_path))
+                logger.info(f"  [{position}] {role:8s} → {out_path.name}  "
+                      f"({seg['start_sec']}s–{seg['end_sec']}s from {Path(seg['video_path']).name})")
+            except Exception as e:
+                logger.info(f"  [{position}] ✗ Trim failed: {e}")
+                logger.info(f"       → Clip {position} dropped to prevent pacing issues.")
 
-    if trim_failures:
-        logger.info(f"⚠️  {len(trim_failures)} clip(s) used full-source fallback.")
 
     if len(ordered_clip_paths) == 0:
         raise RuntimeError("No clips available to stitch.")

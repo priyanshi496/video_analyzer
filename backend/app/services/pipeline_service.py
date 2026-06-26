@@ -31,17 +31,21 @@ from app.services.logger_service import (
     log_story_order_call,
     write_run_summary,
 )
+from app.services.stitch_service import get_video_dimensions, get_video_rotation_metadata
+
 
 CONFIG = {
     "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
     "fallback_models": [
-        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-        "google/gemma-4-31b-it:free",
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
     ],
     "max_tokens_vision": 4096,
     "max_tokens_text":   1000,
     "story_order_model":    "openai/gpt-oss-120b:free",
-    "story_order_fallback": "meta-llama/llama-3-8b-instruct:free",
+    "story_order_fallback": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    # Two-step story context: vision analysis + narrative writing
+    "story_vision_model":    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",  # Step 1: NVIDIA NIM multiimage
+    "story_narrative_model": "openrouter/owl-alpha",                            # Step 2: OpenRouter text
     "max_parallel_vision_calls": 3,
     "image_limit_per_request": 8,
     "max_reference_images": None,
@@ -74,6 +78,88 @@ def save_cache(cache: dict):
         logging.warning(f"Failed to save cache: {e}")
 
 
+import requests
+import re
+from PIL import Image
+from PIL.ExifTags import TAGS, GPSTAGS
+
+GEOCODE_CACHE = {}
+
+def get_lat_lon_from_exif(image_path):
+    try:
+        image = Image.open(image_path)
+        info = image._getexif()
+        if not info: return None, None
+        
+        gps_info = None
+        for tag, value in info.items():
+            decoded = TAGS.get(tag, tag)
+            if decoded == "GPSInfo":
+                gps_info = {GPSTAGS.get(t, t): value[t] for t in value}
+                break
+                
+        if not gps_info: return None, None
+        
+        def convert_to_degrees(value):
+            d, m, s = value
+            return float(d) + (float(m) / 60.0) + (float(s) / 3600.0)
+            
+        lat = lon = None
+        if "GPSLatitude" in gps_info and "GPSLatitudeRef" in gps_info:
+            lat = convert_to_degrees(gps_info["GPSLatitude"])
+            if gps_info["GPSLatitudeRef"] != "N": lat = -lat
+                
+        if "GPSLongitude" in gps_info and "GPSLongitudeRef" in gps_info:
+            lon = convert_to_degrees(gps_info["GPSLongitude"])
+            if gps_info["GPSLongitudeRef"] != "E": lon = -lon
+                
+        return lat, lon
+    except Exception:
+        return None, None
+
+def get_time_from_exif(image_path):
+    try:
+        image = Image.open(image_path)
+        info = image._getexif()
+        if not info: return None
+        for tag, value in info.items():
+            if TAGS.get(tag, tag) == "DateTimeOriginal":
+                return value
+    except Exception:
+        pass
+    return None
+
+def reverse_geocode(lat, lon):
+    if not lat or not lon: return None
+    key = f"{round(lat, 3)},{round(lon, 3)}"
+    if key in GEOCODE_CACHE: return GEOCODE_CACHE[key]
+    
+    url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json"
+    headers = {"User-Agent": "VideoAnalyzerBot/1.0", "Accept-Language": "en"}
+    try:
+        r = requests.get(url, headers=headers, timeout=3)
+        if r.status_code == 200:
+            data = r.json()
+            address = data.get("address", {})
+            parts = []
+            if "amenity" in address: parts.append(address["amenity"])
+            elif "historic" in address: parts.append(address["historic"])
+            elif "tourism" in address: parts.append(address["tourism"])
+            
+            if "city" in address: parts.append(address["city"])
+            elif "town" in address: parts.append(address["town"])
+            elif "village" in address: parts.append(address["village"])
+            
+            if "state" in address: parts.append(address["state"])
+            if "country" in address: parts.append(address["country"])
+            
+            res = ", ".join(parts) if parts else data.get("display_name")
+            GEOCODE_CACHE[key] = res
+            return res
+    except Exception as e:
+        logging.warning(f"Geocode failed: {e}")
+    return None
+
 # ── Video Metadata ─────────────────────────────────────────────────────────────
 
 def get_video_info(path: str) -> Optional[dict]:
@@ -85,6 +171,11 @@ def get_video_info(path: str) -> Optional[dict]:
             height, width = img.shape[:2]
         else:
             width, height = 1080, 1920
+            
+        lat, lon = get_lat_lon_from_exif(path)
+        location_name = reverse_geocode(lat, lon)
+        creation_time = get_time_from_exif(path)
+        
         return {
             "path":         path,
             "duration_sec": 3.0,  # Fabricate 3.0s duration for static photo
@@ -93,6 +184,8 @@ def get_video_info(path: str) -> Optional[dict]:
             "fps":          30.0,
             "total_frames": 1,
             "is_image":     True,
+            "location_name": location_name,
+            "creation_time": creation_time,
         }
 
     try:
@@ -126,6 +219,23 @@ def get_video_info(path: str) -> Optional[dict]:
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.release()
 
+    creation_time = meta.get("format", {}).get("tags", {}).get("creation_time")
+    location_name = None
+    loc_str = (
+
+        meta.get("format", {}).get("tags", {}).get("location")
+        or meta.get("format", {}).get("tags", {}).get("location-eng")
+        or meta.get("format", {}).get("tags", {}).get("com.apple.quicktime.location.ISO6709")
+    )
+    if loc_str:
+        import re
+        match = re.search(r"([+-]\d+\.\d+)([+-]\d+\.\d+)", loc_str)
+        if match:
+            lat, lon = float(match.group(1)), float(match.group(2))
+            location_name = reverse_geocode(lat, lon)
+
+
+
     return {
         "path":         path,
         "duration_sec": duration,
@@ -133,6 +243,8 @@ def get_video_info(path: str) -> Optional[dict]:
         "height":       int(vs.get("height", 0)),
         "fps":          fps,
         "total_frames": total_frames,
+        "creation_time": creation_time,
+        "location_name": location_name,
     }
 
 
@@ -209,11 +321,9 @@ def make_fallback_analysis(
         "video_summary":     summary,
         "camera_rotation":   0,
         "detected_scenario": "D",
-        "overall_mood": "unknown", "overall_vibe": "unknown",
         "key_moments":    [{"timestamp_sec": start, "description": "Quality-guided fallback window"}],
         "segments":       [{"start_sec": start, "end_sec": end, "what_happens": "Quality-guided fallback",
-                            "mood": "unknown", "energy": 5, "visual_quality": 7,
-                            "instagrammable": 7, "story_value": 5, "keep": True,
+                            "keep": True,
                             "reason": reason}],
         "best_segments":  [{"start_sec": start, "end_sec": end,
                             "reason": reason,
@@ -595,9 +705,12 @@ def apply_focus_filter(clips: list, focus: dict, total_slots: int) -> list:
 
 def auto_recover_segments(parsed: dict) -> dict:
     """Robust fallback: if best_segments is empty/missing but segments is populated, auto-recover them."""
-    # Force camera_rotation to always be 0 to prevent AI hallucinated rotations.
-    # User can still manually rotate clips using the editor UI.
-    rotation = 0
+    # Try to get the rotation from the AI, fallback to 0
+    rotation = parsed.get("camera_rotation", 0)
+    try:
+        rotation = int(rotation)
+    except (ValueError, TypeError):
+        rotation = 0
 
     if not isinstance(parsed, dict):
         parsed = {}
@@ -697,7 +810,21 @@ def merge_adjacent(segs: list, gap: float = 0.5, max_duration: float = 4.0) -> l
     """
     if not segs:
         return segs
-    segs   = sorted(segs, key=lambda s: s["start_sec"])
+        
+    valid_segs = []
+    for s in segs:
+        if isinstance(s, dict) and "start_sec" in s and "end_sec" in s:
+            try:
+                s["start_sec"] = float(s["start_sec"])
+                s["end_sec"] = float(s["end_sec"])
+                valid_segs.append(s)
+            except (ValueError, TypeError):
+                pass
+                
+    if not valid_segs:
+        return []
+        
+    segs = sorted(valid_segs, key=lambda s: s["start_sec"])
     merged = [segs[0].copy()]
     for seg in segs[1:]:
         new_end  = max(merged[-1]["end_sec"], seg["end_sec"])
@@ -705,11 +832,52 @@ def merge_adjacent(segs: list, gap: float = 0.5, max_duration: float = 4.0) -> l
         gap_dist = seg["start_sec"] - merged[-1]["end_sec"]
         if gap_dist <= gap and new_dur <= max_duration:
             merged[-1]["end_sec"]  = new_end
-            merged[-1]["reason"]  += " + " + seg["reason"]
-            merged[-1]["priority"] = min(merged[-1]["priority"], seg.get("priority", 999))
+            merged[-1]["reason"]  = merged[-1].get("reason", "") + " + " + seg.get("reason", "")
+            merged[-1]["priority"] = min(merged[-1].get("priority", 999), seg.get("priority", 999))
         else:
             merged.append(seg.copy())
     return merged
+
+
+def expand_segments(segments: list, min_duration: float = 2.5, video_duration: float = 0.0) -> list:
+    """
+    Expands the duration of segments to ensure they meet a minimum duration.
+    Attempts to expand symmetrically (half before, half after).
+    Clamps to the video boundaries.
+    """
+    for seg in segments:
+        try:
+            start = float(seg.get("start_sec", 0.0))
+            end = float(seg.get("end_sec", 0.0))
+            dur = end - start
+            
+            if dur < min_duration:
+                deficit = min_duration - dur
+                half = deficit / 2.0
+                
+                new_start = start - half
+                new_end = end + half
+                
+                # Shift if we hit boundaries
+                if new_start < 0.0:
+                    new_end += (0.0 - new_start)
+                    new_start = 0.0
+                    
+                if new_end > video_duration:
+                    new_start -= (new_end - video_duration)
+                    new_end = video_duration
+                    
+                # Final clamp in case video itself is shorter than min_duration
+                new_start = max(0.0, new_start)
+                new_end = min(video_duration, new_end)
+                
+                seg["start_sec"] = new_start
+                seg["end_sec"] = new_end
+                
+        except (ValueError, TypeError):
+            pass
+            
+    return segments
 
 
 def early_deduplicate_segments(segments: list) -> list:
@@ -772,13 +940,19 @@ def process_single_video(
     video_quality_map: dict,
     reference_paths: list,
     directives: str = "",
+    journey_phase: str = None,
 ) -> dict:
     # Check cache first thread-safely
     with CACHE_LOCK:
         cache = load_cache()
     
+    actual_directives = directives
+    if journey_phase:
+        phase_directive = f"STORY CONTEXT: This asset belongs to the '{journey_phase}' phase of the story. Please label segments accordingly."
+        actual_directives = f"{directives}\n{phase_directive}" if directives else phase_directive
+
     # Incorporate normalized directives into cache key to avoid cache collisions
-    norm_directives = " ".join(directives.lower().split()) if directives else ""
+    norm_directives = " ".join(actual_directives.lower().split()) if actual_directives else ""
     cache_key = f"{info['path']}_{info['duration_sec']}_{norm_directives}"
     if cache_key in cache:
         cached_val = cache[cache_key]
@@ -839,7 +1013,7 @@ def process_single_video(
 
     if dur <= chunk_window:
         fm, parsed     = analyze_window(info, 0.0, dur, api_key, video_quality_map,
-                                        reference_paths=reference_paths, directives=directives)
+                                        reference_paths=reference_paths, directives=actual_directives)
         parsed         = auto_recover_segments(parsed)
         all_frame_meta = fm
         chunk_analyses = [parsed]
@@ -858,7 +1032,7 @@ def process_single_video(
             label = f"chunk{ci:02d}"
             logging.info(f"   Chunk {ci+1}/{len(starts)}: [{start:.1f}s–{start+window:.1f}s]")
             fm, parsed = analyze_window(info, start, window, api_key, video_quality_map,
-                                        chunk_label=label, reference_paths=reference_paths, directives=directives)
+                                        chunk_label=label, reference_paths=reference_paths, directives=actual_directives)
             parsed = auto_recover_segments(parsed)
             parsed = offset_segments(parsed, start)
             all_frame_meta += fm
@@ -867,6 +1041,7 @@ def process_single_video(
 
     # Removed early dedup so that all candidate segments make it to the UI library
     parsed["best_segments"] = merge_adjacent(parsed.get("best_segments", []))
+    parsed["best_segments"] = expand_segments(parsed["best_segments"], min_duration=2.5, video_duration=dur)
     parsed["best_segments"] = clamp_segments(parsed.get("best_segments", []), dur)
     parsed["segments"]      = clamp_segments(parsed.get("segments",      []), dur)
 
@@ -888,6 +1063,9 @@ def process_single_video(
         "frame_meta":   all_frame_meta,
         "analysis":     parsed,
         "n_chunks":     len(chunk_analyses),
+        "creation_time": info.get("creation_time"),
+        "location_name": info.get("location_name"),
+        "asset_id":      info.get("asset_id"),
     }
 
     with CACHE_LOCK:
@@ -900,6 +1078,139 @@ def process_single_video(
 
 # ── Full Analysis Orchestrator ─────────────────────────────────────────────────
 
+def run_story_context_analysis(video_infos: list, vibe: str, directives: str, tmpdir: str) -> dict:
+    """
+    Two-step story context pipeline:
+      Step 1 — Nemotron (NVIDIA NIM, multiimage): Analyzes each thumbnail visually.
+               Returns per-asset descriptions (setting, subjects, activity, tone, trip_phase).
+      Step 2 — owl-alpha (OpenRouter, text only): Takes those descriptions and writes
+               a rich personal narrative + determines chronological asset_order + phases.
+    """
+    from app.services.frames_service import extract_thumbnail
+    from app.services.prompts_service import build_story_vision_prompt, build_story_narrative_prompt
+    from app.services.llm_service import call_openrouter_multiimage, call_openrouter_text
+
+    asset_summaries = []
+    MAX_THUMBNAILS = 8
+
+    for idx, info in enumerate(video_infos):
+        if idx >= MAX_THUMBNAILS:
+            logging.info(f"  ⏭  Skipping story context for asset {idx} (max {MAX_THUMBNAILS} thumbnails).")
+            break
+
+        thumb_path = extract_thumbnail(info["path"], tmpdir)
+        if thumb_path:
+            asset_summaries.append({
+                "index": idx,
+                "filename": Path(info["path"]).name,
+                "thumbnail_path": thumb_path,
+                "location_name": info.get("location_name"),
+                "creation_time": info.get("creation_time")
+            })
+
+    if not asset_summaries:
+        logging.warning("  ⚠️  Failed to extract any thumbnails for story context.")
+        return None
+
+    num_assets = len(asset_summaries)
+    image_paths = [a["thumbnail_path"] for a in asset_summaries]
+
+    # ── STEP 1: Nemotron (NVIDIA NIM) — Visual Analysis ───────────────────────
+    vision_model = CONFIG.get("story_vision_model", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
+    vision_prompt = build_story_vision_prompt(asset_summaries)
+    logging.info(f"  🔍 [Story Step 1/2] Sending {num_assets} thumbnails to {vision_model} for visual analysis...")
+
+    asset_descriptions = []
+    try:
+        import time
+        start_t = time.time()
+        raw_vision = call_openrouter_multiimage(image_paths, vision_prompt, vision_model)
+        dur = time.time() - start_t
+        vision_parsed = parse_json_response(raw_vision)
+        
+        from app.services.logger_service import log_llm_call
+        log_llm_call(
+            label="story_context_vision", 
+            model=vision_model, 
+            prompt=vision_prompt, 
+            raw_response=raw_vision, 
+            parsed=vision_parsed if isinstance(vision_parsed, dict) else None,
+            duration_sec=dur
+        )
+        
+        if isinstance(vision_parsed, dict) and "asset_descriptions" in vision_parsed:
+            asset_descriptions = vision_parsed["asset_descriptions"]
+            logging.info(f"  ✓ [Step 1] Visual analysis complete: {len(asset_descriptions)} asset(s) described.")
+        else:
+            logging.warning("  ⚠️  [Step 1] Vision model returned unexpected schema. Proceeding with filenames only.")
+    except Exception as e:
+        logging.error(f"  ✗ [Step 1] Vision analysis failed: {e}. Proceeding with filenames only.")
+
+    # If vision step failed or returned incomplete data, build minimal descriptions from filenames
+    if not asset_descriptions or len(asset_descriptions) < num_assets:
+        logging.info("  🔄 Filling missing asset descriptions from filenames...")
+        described_indices = {d.get("index") for d in asset_descriptions}
+        for a in asset_summaries:
+            if a["index"] not in described_indices:
+                asset_descriptions.append({
+                    "index": a["index"],
+                    "setting": "unknown",
+                    "subjects": "unknown",
+                    "activity": "unknown",
+                    "time_of_day": "unknown",
+                    "emotional_tone": "unknown",
+                    "trip_phase": "unknown"
+                })
+    asset_descriptions = sorted(asset_descriptions, key=lambda d: d.get("index", 0))
+    # Enrich descriptions with geocoded location name and creation time
+    summaries_by_idx = {a["index"]: a for a in asset_summaries}
+    for desc in asset_descriptions:
+        idx = desc.get("index")
+        if idx in summaries_by_idx:
+            desc["location_name"] = summaries_by_idx[idx].get("location_name")
+            desc["creation_time"] = summaries_by_idx[idx].get("creation_time")
+
+
+    # ── STEP 2: owl-alpha (OpenRouter, text only) — Narrative Writing ──────────
+    narrative_model = CONFIG.get("story_narrative_model", "openrouter/owl-alpha")
+    narrative_prompt = build_story_narrative_prompt(asset_descriptions, vibe, directives, num_assets)
+    logging.info(f"  ✍️  [Story Step 2/2] Sending descriptions to {narrative_model} for narrative writing...")
+
+    try:
+        import time
+        start_t = time.time()
+        raw_narrative = call_openrouter_text(
+            narrative_prompt,
+            model=narrative_model,
+            fallbacks=["openai/gpt-4o-mini", "google/gemini-flash-1.5"],
+            temperature=0.7,  # slightly creative for narrative writing
+        )
+        dur = time.time() - start_t
+        parsed = parse_json_response(raw_narrative)
+        
+        from app.services.logger_service import log_llm_call
+        log_llm_call(
+            label="story_context_narrative", 
+            model=narrative_model, 
+            prompt=narrative_prompt, 
+            raw_response=raw_narrative, 
+            parsed=parsed if isinstance(parsed, dict) else None,
+            duration_sec=dur
+        )
+        
+        if isinstance(parsed, dict) and "asset_order" in parsed and "story_summary" in parsed:
+            summary = parsed.get("story_summary", "")
+            logging.info(f"  ✓ [Step 2] Story narrative complete: {summary[:120]}...")
+            return parsed
+        else:
+            logging.warning(f"  ⚠️  [Step 2] Narrative model returned invalid schema: {str(parsed)[:200]}")
+            return None
+    except Exception as e:
+        logging.error(f"  ✗ [Step 2] Narrative writing failed: {e}")
+        return None
+
+
+
 def run_full_analysis(
     video_infos: list,
     api_key: str,
@@ -908,11 +1219,33 @@ def run_full_analysis(
     directives: str = "",
     use_uploaded_order: bool = False,
     progress_callback = None,
+    story_context: dict = None,
 ) -> list:
     """
     Run process_single_video for all videos in parallel, then build final
     ordered best_segments list with story ordering.
     """
+    def extract_whatsapp_timestamp(filepath: str):
+        import re
+        from datetime import datetime
+        filename = Path(filepath).name
+        # Match: WhatsApp Video 2026-06-19 at 16.10.26.mp4 or WhatsApp Image 2026-06-19 at 16.10.26.jpeg
+        match = re.search(r'(\d{4}-\d{2}-\d{2})\s+at\s+(\d{2})\.(\d{2})\.(\d{2})', filename)
+        if match:
+            date_str, hh, mm, ss = match.groups()
+            try:
+                return datetime.strptime(f"{date_str} {hh}:{mm}:{ss}", "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                pass
+        # Try just matching date
+        match_date = re.search(r'(\d{4}-\d{2}-\d{2})', filename)
+        if match_date:
+            try:
+                return datetime.strptime(match_date.group(1), "%Y-%m-%d")
+            except Exception:
+                pass
+        return None
+
     pipeline_start_time = time.time()
 
     logging.info(f"\n{'='*60}")
@@ -921,10 +1254,12 @@ def run_full_analysis(
 
     max_workers = min(len(video_infos) or 1, CONFIG.get("max_parallel_vision_calls", 3))
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futures = [
-            ex.submit(process_single_video, info, api_key, video_quality_map, reference_paths, directives)
-            for info in video_infos
-        ]
+        futures = []
+        for idx, info in enumerate(video_infos):
+            journey_phase = None
+            if story_context and "asset_phases" in story_context:
+                journey_phase = story_context["asset_phases"].get(str(idx))
+            futures.append(ex.submit(process_single_video, info, api_key, video_quality_map, reference_paths, directives, journey_phase))
         import concurrent.futures
         all_results = []
         for future in concurrent.futures.as_completed(futures):
@@ -934,6 +1269,13 @@ def run_full_analysis(
 
     best_segments = []
     for video_idx, result in enumerate(all_results):
+        # Find the original index of this video in the input video_infos list to ensure
+        # that video_idx matches the media_assets sequence index (and does not depend on
+        # the arbitrary order in which parallel threads complete).
+        orig_video_idx = next(
+            (i for i, info in enumerate(video_infos) if info["path"] == result["video_path"]),
+            video_idx
+        )
         segs = sorted(result["analysis"].get("best_segments", []),
                       key=lambda s: float(s.get("start_sec", 0)))
         for seg in segs:
@@ -955,7 +1297,7 @@ def run_full_analysis(
 
             constructed_seg = {
                 "video_path":         result["video_path"],
-                "video_idx":          video_idx,
+                "video_idx":          orig_video_idx,
                 "video_duration_sec": result["duration_sec"],
                 "video_summary":      result["analysis"].get("video_summary",  ""),
                 "overall_mood":       result["analysis"].get("overall_mood",   ""),
@@ -977,6 +1319,9 @@ def run_full_analysis(
                 "primary_subjects":   seg.get("primary_subjects", []),
                 "what_happens":       seg.get("what_happens", ""),
                 "mood":               seg.get("mood", ""),
+                "creation_time":      result.get("creation_time"),
+                "location_name":      result.get("location_name"),
+                "asset_id":           result.get("asset_id"),
             }
             constructed_seg["ai_score"] = calculate_alignment_score(constructed_seg, directives)
             best_segments.append(constructed_seg)
@@ -1151,26 +1496,47 @@ def run_full_analysis(
             seg["is_used"] = False
 
     # ── Temporal Pre-sorting or Uploaded Order Sorting ────────────────────────
-    if use_uploaded_order:
+    def sort_by_timestamp_and_idx(segments):
+        def get_sort_key(s):
+            ts = extract_whatsapp_timestamp(s["video_path"])
+            if ts:
+                return (ts, int(s.get("video_idx", 0)), float(s.get("start_sec", 0.0)))
+            else:
+                from datetime import datetime
+                TIME_ORDER = {
+                    "dawn": 0, "morning": 1, "afternoon": 2, "day": 2, "midday": 2,
+                    "golden_hour": 3, "sunset": 3, "dusk": 4, "evening": 4, "night": 5, "unknown": 6
+                }
+                fallback_time_val = TIME_ORDER.get(s.get("time_of_day", "unknown"), 6)
+                dummy_ts = datetime.combine(datetime.min.date(), datetime.min.time().replace(hour=fallback_time_val))
+                return (dummy_ts, int(s.get("video_idx", 0)), float(s.get("start_sec", 0.0)))
+        return sorted(segments, key=get_sort_key)
+
+    asset_order = []
+    if story_context and "asset_order" in story_context:
+        asset_order = story_context["asset_order"]
+        
+    if asset_order:
+        logging.info(f"Sorting clips by LLM-defined asset_order: {asset_order}")
+        path_to_idx = {str(res["video_path"]): idx for idx, res in enumerate(all_results)}
+        def get_story_sort_key(seg):
+            v_path = str(seg["video_path"])
+            src_idx = path_to_idx.get(v_path, 999)
+            try:
+                order_pos = asset_order.index(src_idx)
+            except ValueError:
+                order_pos = 999
+            return (order_pos, float(seg.get("start_sec", 0.0)))
+        survived = sorted(survived, key=get_story_sort_key)
+    elif use_uploaded_order:
         logging.info("  📂 Sorting clips strictly by uploaded file order...")
         survived = sorted(
             survived,
             key=lambda s: (int(s.get("video_idx", 0)), float(s.get("start_sec", 0.0)))
         )
     else:
-        TIME_ORDER = {
-            "dawn": 0, "morning": 1, "afternoon": 2, "day": 2, "midday": 2,
-            "golden_hour": 3, "sunset": 3, "dusk": 4, "evening": 4, "night": 5, "unknown": 6
-        }
-        def sort_by_temporal_flow(segments):
-            return sorted(
-                segments,
-                key=lambda s: (
-                    TIME_ORDER.get(s.get("time_of_day", "unknown"), 6),
-                    int(s.get("priority", 999) or 999)
-                )
-            )
-        survived = sort_by_temporal_flow(survived)
+        logging.info("  📂 Sorting clips chronologically by filename timestamps...")
+        survived = sort_by_timestamp_and_idx(survived)
 
     # ── Story ordering (run only on survived clips) ─────────────────────────
     story_order = list(range(len(survived)))
@@ -1179,9 +1545,32 @@ def run_full_analysis(
     story_transitions = []
     story_transition_durations = []
 
-    if len(survived) >= 2 and not use_uploaded_order:
-        logging.info("\nRequesting story order from model...")
-        story_prompt = build_story_order_prompt(survived, all_results, directives, focus)
+    # Bypassed LLM story ordering call to guarantee 100% accurate location grouping and speed up pipeline by 45s
+    if False:
+        
+        # Determine landscape vs portrait for each clip to help the LLM prioritize vertical clips
+        for seg in survived:
+            try:
+                is_img = seg.get("is_image", False) or Path(seg["video_path"]).suffix.lower() in (".jpg", ".jpeg", ".png", ".heic")
+                import cv2
+                if is_img:
+                    frame = cv2.imread(str(seg["video_path"]))
+                    if frame is not None:
+                        eff_h, eff_w = frame.shape[:2]
+                    else:
+                        eff_w, eff_h = 1080, 1920
+                else:
+                    cap = cv2.VideoCapture(str(seg["video_path"]))
+                    eff_w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+                    eff_h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                    cap.release()
+                
+                input_aspect = eff_w / eff_h if eff_h else 1
+                seg["is_landscape"] = input_aspect > 1.0
+            except Exception:
+                seg["is_landscape"] = False
+
+        story_prompt = build_story_order_prompt(survived, all_results, directives, focus, story_context)
         t0 = time.time()
         raw_order = None
         story_model = CONFIG.get("story_order_model", CONFIG["model"])
@@ -1205,6 +1594,13 @@ def run_full_analysis(
             roles = parsed_order.get("roles", [])
             llm_transitions = parsed_order.get("transitions", [])
             llm_durations = parsed_order.get("transition_durations", [])
+            
+            removed_clips_data = parsed_order.get("removed_clips", [])
+            explicitly_removed = set()
+            for r in removed_clips_data:
+                idx = r.get("clip")
+                if isinstance(idx, int):
+                    explicitly_removed.add(idx)
 
             # ── Lenient validation: accept valid subset, append missing indices ──
             n = len(survived)
@@ -1212,16 +1608,27 @@ def run_full_analysis(
             seen = set()
             clean_order = []
             clean_roles = []
-            for pos, idx in enumerate(order):
-                if isinstance(idx, int) and 0 <= idx < n and idx not in seen:
-                    clean_order.append(idx)
+            for pos, idx_or_group in enumerate(order):
+                if isinstance(idx_or_group, list):
+                    group = []
+                    for idx in idx_or_group:
+                        if isinstance(idx, int) and 0 <= idx < n and idx not in seen:
+                            group.append(idx)
+                            seen.add(idx)
+                        else:
+                            logging.info(f"  ⚠️  Story order: dropping invalid/duplicate index {idx} in group")
+                    if group:
+                        clean_order.append(group if len(group) > 1 else group[0])
+                        clean_roles.append(roles[pos] if pos < len(roles) else "build")
+                elif isinstance(idx_or_group, int) and 0 <= idx_or_group < n and idx_or_group not in seen:
+                    clean_order.append(idx_or_group)
                     clean_roles.append(roles[pos] if pos < len(roles) else "build")
-                    seen.add(idx)
+                    seen.add(idx_or_group)
                 else:
-                    logging.info(f"  ⚠️  Story order: dropping invalid/duplicate index {idx}")
+                    logging.info(f"  ⚠️  Story order: dropping invalid/duplicate index {idx_or_group}")
 
-            # Append any clips the LLM forgot to include
-            missing = [i for i in range(n) if i not in seen]
+            # Append any clips the LLM forgot to include (that weren't explicitly removed)
+            missing = [i for i in range(n) if i not in seen and i not in explicitly_removed]
             if missing:
                 logging.info(f"  ⚠️  Story order: LLM missed indices {missing} — appending them at end")
                 for idx in missing:
@@ -1253,73 +1660,193 @@ def run_full_analysis(
             )
             logging.info(f"Story ordering failed ({e}), keeping original order.")
 
+    # ── POST-PROCESS: Force all solo landscape clips into split-screen grids ──
+    def enforce_landscape_grids(order: list, survived: list) -> list:
+        """
+        STEP 1: Fully flatten the entire LLM order — including breaking apart any
+        existing grids the LLM formed. This catches cases where the LLM cheated by
+        jamming portrait clips into a grid just to satisfy the landscape rule.
+
+        STEP 2: Walk the flat list in original sequence order. Split clips into
+        landscape vs portrait buckets, preserving their relative positions.
+
+        STEP 3: Form pure landscape-only grids (3 at a time). If fewer than 3
+        landscape clips exist, they fall back to playing individually.
+
+        STEP 4: Interleave the grids and portrait clips back together, placing
+        each grid at the position of its first constituent clip.
+        """
+        # ── STEP 1: Flatten everything into (original_pos, clip_idx) pairs ──
+        flat = []  # list of (original_position_in_order, clip_index)
+        for pos, item in enumerate(order):
+            if isinstance(item, list):
+                # Existing grid — break it apart and treat each clip individually
+                for sub_idx in item:
+                    flat.append((pos, sub_idx))
+            else:
+                flat.append((pos, item))
+
+        # ── STEP 2: Separate landscape vs portrait clips ──
+        landscape_clips = []   # (original_pos, clip_idx) for landscape clips
+        portrait_clips  = []   # (original_pos, clip_idx) for portrait clips
+
+        for (pos, idx) in flat:
+            seg = survived[idx]
+            if seg.get("is_landscape", False):
+                landscape_clips.append((pos, idx))
+            else:
+                portrait_clips.append((pos, idx))
+
+        n_landscape = len(landscape_clips)
+
+        if n_landscape < 3:
+            # Not enough landscape clips for even one grid — return original order untouched
+            logging.info(
+                f"  ℹ️  [enforce_landscape_grids] Only {n_landscape} landscape clip(s) total "
+                f"(including inside LLM grids). Not enough for a pure grid. Restoring individual playback."
+            )
+            # Reconstruct order as all-individual (break up any bad mixed grids)
+            return [idx for (_, idx) in flat]
+
+        # ── STEP 3: Form pure landscape-only grids ──
+        n_full_grids = n_landscape // 3
+        n_leftover   = n_landscape % 3
+
+        logging.info(
+            f"  🔲 [enforce_landscape_grids] {n_landscape} landscape clip(s) found. "
+            f"Forming {n_full_grids} pure landscape grid(s), {n_leftover} individual leftover(s)."
+        )
+
+        landscape_indices = [idx for (_, idx) in landscape_clips]
+        grids = [landscape_indices[g * 3 : g * 3 + 3] for g in range(n_full_grids)]
+        leftover_landscape = landscape_indices[n_full_grids * 3:]
+
+        # ── STEP 4: Rebuild the final order ──
+        # Strategy: walk through `flat` in order. When we hit the first clip of
+        # a landscape group, emit the grid. Skip subsequent clips in that group.
+        # Portrait clips get emitted as-is. Leftover landscape clips also as-is.
+
+        grid_inserted_at = set()   # which grid numbers have been emitted
+        landscape_rank_map = {idx: rank for rank, (_, idx) in enumerate(landscape_clips)}
+
+        new_order = []
+        for (pos, idx) in flat:
+            seg = survived[idx]
+            if seg.get("is_landscape", False):
+                rank = landscape_rank_map[idx]
+                group_num = rank // 3
+
+                if group_num >= n_full_grids:
+                    # Leftover landscape — play individually
+                    new_order.append(idx)
+                elif group_num not in grid_inserted_at:
+                    # First clip of this group → emit the whole grid
+                    new_order.append(grids[group_num])
+                    grid_inserted_at.add(group_num)
+                # else: 2nd or 3rd clip of an already-emitted grid → skip
+            else:
+                new_order.append(idx)
+
+        return new_order
+
+    # Only enforce grids when the LLM ran (not when using uploaded order)
+    if not use_uploaded_order and len(survived) >= 2:
+        story_order = enforce_landscape_grids(story_order, survived)
+        logging.info(f"Story order (after grid enforcement): {story_order}")
+
     # ── Apply story ordering to survived clips ───────────────────────────────
     ordered_survived = []
+
     actually_used_keys = set()
-    for position, seg_idx in enumerate(story_order):
-        seg = survived[seg_idx].copy()
-        seg["is_used"]        = True
-        seg["story_position"] = position
+    for position, idx_or_group in enumerate(story_order):
         
-        # Adjust segment timings for professional pacing and visual storytelling
-        loc_lower = str(seg.get("location_tag", "")).lower()
-        desc_lower = str(seg.get("what_happens", "")).lower()
-        subjs_lower = " ".join([str(s).lower() for s in seg.get("primary_subjects", [])])
-        combined_text = f"{loc_lower} {desc_lower} {subjs_lower}"
+        def apply_pacing(seg_obj, role="build"):
+            loc_lower = str(seg_obj.get("location_tag", "")).lower()
+            desc_lower = str(seg_obj.get("what_happens", "")).lower()
+            subjs_lower = " ".join([str(s).lower() for s in seg_obj.get("primary_subjects", [])])
+            combined_text = f"{loc_lower} {desc_lower} {subjs_lower}"
 
-        start = float(seg["start_sec"])
-        end = float(seg["end_sec"])
-        duration = end - start
-        video_dur = float(seg.get("video_duration_sec", 999.0))
+            start = float(seg_obj["start_sec"])
+            end = float(seg_obj["end_sec"])
+            duration = end - start
+            video_dur = float(seg_obj.get("video_duration_sec", 999.0))
 
-        # Check if the segment is high-energy action
-        is_action = any(kw in combined_text for kw in ["pool", "swim", "water", "action", "ping", "pong", "tennis", "play", "jump", "active", "splash", "game"])
-        # Check if it is a slow/atmospheric beauty shot (temple, candles, sunset, reflection)
-        is_slow = any(kw in combined_text for kw in ["sunset", "candle", "temple", "serene", "calm", "reflection", "slow", "beauty", "scenery", "night"])
+            is_action = any(kw in combined_text for kw in ["pool", "swim", "water", "action", "ping", "pong", "tennis", "play", "jump", "active", "splash", "game"])
+            is_slow = any(kw in combined_text for kw in ["sunset", "candle", "temple", "serene", "calm", "reflection", "slow", "beauty", "scenery", "night"])
 
-        if is_action:
-            # High-energy active footage: fast, dynamic, exactly 1.5 - 2.0s
-            target_dur = min(2.0, max(1.5, duration))
-            target_end = min(video_dur, start + target_dur)
-            seg["end_sec"] = round(target_end, 2)
-        elif is_slow:
-            # Slower atmospheric beauty shots: let it linger for 3.0 - 4.0s (up to max available)
-            target_dur = max(3.0, min(4.0, duration))
-            target_end = min(video_dur, start + target_dur)
-            seg["end_sec"] = round(target_end, 2)
-        else:
-            # Standard clips: capped at 3.0 seconds
-            if duration > 3.0:
-                seg["end_sec"] = round(start + 3.0, 2)
+            if role == "payoff":
+                target_dur = max(4.5, min(6.0, duration))
+                target_end = min(video_dur, start + target_dur)
+                seg_obj["end_sec"] = round(target_end, 2)
+            elif is_action:
+                target_dur = min(3.0, max(2.0, duration))
+                target_end = min(video_dur, start + target_dur)
+                seg_obj["end_sec"] = round(target_end, 2)
+            elif is_slow:
+                target_dur = max(4.0, min(5.0, duration))
+                target_end = min(video_dur, start + target_dur)
+                seg_obj["end_sec"] = round(target_end, 2)
+            else:
+                # Allow normal clips to run up to 4.5s for a longer, more complete reel duration
+                target_dur = max(3.5, min(4.5, duration))
+                target_end = min(video_dur, start + target_dur)
+                seg_obj["end_sec"] = round(target_end, 2)
 
-        if seg["end_sec"] <= seg["start_sec"] + 0.1:
-            seg["end_sec"] = round(seg["start_sec"] + 0.1, 2)
+            if seg_obj["end_sec"] <= seg_obj["start_sec"] + 0.1:
+                seg_obj["end_sec"] = round(seg_obj["start_sec"] + 0.1, 2)
+            return seg_obj
         
-        # Enforce logical roles based on position: hook at index 0, payoff at the end
+        # Determine global role and transition for this position
         role = story_roles[position] if position < len(story_roles) else "build"
-        if position == 0:
-            role = "hook"
-        elif position == len(story_order) - 1:
-            role = "payoff"
-        elif role in ("hook", "payoff"):
-            role = "build"
-            
-        seg["story_role"]     = role
-        if position == 0 and story_reasoning:
-            seg["global_story_reasoning"] = story_reasoning
-
-        # Attach transition metadata if present and within range
+        if position == 0: role = "hook"
+        elif position == len(story_order) - 1: role = "payoff"
+        elif role in ("hook", "payoff"): role = "build"
+        
+        next_trans = None
+        next_trans_dur = None
         if position < len(story_order) - 1:
             if story_transitions and position < len(story_transitions):
-                seg["next_transition"] = story_transitions[position]
+                next_trans = story_transitions[position]
             if story_transition_durations and position < len(story_transition_durations):
                 try:
-                    seg["next_transition_duration"] = float(story_transition_durations[position])
-                except (ValueError, TypeError):
-                    pass
+                    next_trans_dur = float(story_transition_durations[position])
+                except (ValueError, TypeError): pass
+
+        if isinstance(idx_or_group, list):
+            # Process split screen group
+            grouped_segs = []
+            for sub_idx in idx_or_group:
+                sub_seg = survived[sub_idx].copy()
+                sub_seg["is_used"] = True
+                sub_seg = apply_pacing(sub_seg, role)
+                grouped_segs.append(sub_seg)
+                actually_used_keys.add((sub_seg["video_path"], sub_seg["start_sec"], sub_seg["end_sec"]))
             
-        ordered_survived.append(seg)
-        actually_used_keys.add((seg["video_path"], seg["start_sec"], seg["end_sec"]))
+            group_obj = {
+                "is_split_screen": True,
+                "is_used": True,
+                "story_position": position,
+                "story_role": role,
+                "clips": grouped_segs
+            }
+            if next_trans: group_obj["next_transition"] = next_trans
+            if next_trans_dur is not None: group_obj["next_transition_duration"] = next_trans_dur
+            if position == 0 and story_reasoning: group_obj["global_story_reasoning"] = story_reasoning
+            
+            ordered_survived.append(group_obj)
+        else:
+            seg = survived[idx_or_group].copy()
+            seg["is_used"] = True
+            seg = apply_pacing(seg, role)
+            seg["story_position"] = position
+            seg["story_role"] = role
+            
+            if next_trans: seg["next_transition"] = next_trans
+            if next_trans_dur is not None: seg["next_transition_duration"] = next_trans_dur
+            if position == 0 and story_reasoning: seg["global_story_reasoning"] = story_reasoning
+                
+            ordered_survived.append(seg)
+            actually_used_keys.add((seg["video_path"], seg["start_sec"], seg["end_sec"]))
 
     def enforce_no_consecutive_same_source(ordered_segs):
         """Only prevent clips from the exact same source video file appearing back-to-back."""
@@ -1341,11 +1868,22 @@ def run_full_analysis(
                             break
         return segs
 
-    # Disable the same-source swap post-processing because it scrambles the contiguous scene/location 
-    # groupings generated by the LLM (which are key for focus weighting and keeping birthday clips together).
-    # ordered_survived = enforce_no_consecutive_same_source(ordered_survived)
+    # Ensure no consecutive same-source clips to prevent duplicate/jarring jump cuts
+    filtered_ordered = []
+    for seg in ordered_survived:
+        is_split = seg.get("is_split_screen", False)
+        if not is_split and filtered_ordered and not filtered_ordered[-1].get("is_split_screen", False):
+            if filtered_ordered[-1]["video_path"] == seg["video_path"]:
+                logging.info(f"  ⏭  Dropping back-to-back same-source clip from {Path(seg['video_path']).name} ({seg['start_sec']}s-{seg['end_sec']}s) to prevent duplicate look")
+                actually_used_keys.discard((seg["video_path"], seg["start_sec"], seg["end_sec"]))
+                continue
+        filtered_ordered.append(seg)
+    ordered_survived = filtered_ordered
+
     for position, seg in enumerate(ordered_survived):
         seg["story_position"] = position
+
+
 
     # ── Append unused/duplicate clips at the end ─────────────────────────────
     # This includes clips rejected by hard deduplication AND clips rejected by the Story LLM
@@ -1440,7 +1978,7 @@ from app.models.domain import AnalysisJob, AnalyzedClip, JobStatus
 from app.services.storage_service import storage_service
 
 @celery_app.task(bind=True)
-def analyze_video_project(self, project_id: str, job_id: str, media_assets: list, directives: str = "", vibe: str = "cinematic"):
+def analyze_video_project(self, project_id: str, job_id: str, media_assets: list, directives: str = "", vibe: str = "cinematic", music_config: dict = None):
     import uuid
     import asyncio
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
@@ -1508,10 +2046,23 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                 video_paths.append(local_path)
                 
             video_infos = []
-            for vp in video_paths:
+            for idx, vp in enumerate(video_paths):
                 info = get_video_info(vp)
                 if info:
+                    info["asset_id"] = str(media_assets[idx].get("id"))
+                    info["filename"] = media_assets[idx].get("file_name") or media_assets[idx].get("filename")
                     video_infos.append(info)
+
+            # Sort video_infos chronologically by creation_time to ensure chronological story order mapping
+            def get_chrono_key(x):
+                ct = x.get("creation_time")
+                if not ct:
+                    return (1, "")
+                # Normalize time string to make it comparable
+                t = str(ct).strip().replace(":", "-").replace("T", " ").replace("Z", "")
+                return (0, t)
+            video_infos = sorted(video_infos, key=get_chrono_key)
+
 
             # --- QUALITY ANALYSIS ---
             import sys
@@ -1521,7 +2072,37 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                 sys.path.append(root_dir)
             from quality import analyze_all_videos_quality
             video_quality_map = analyze_all_videos_quality(video_infos)
+            
+            # Export quality map for reuse in Phase 2
+            try:
+                from app.services.storage_service import storage_service
+                export_map = {Path(k).name: v for k, v in video_quality_map.items()}
+                quality_key = f"projects/{project_id}/jobs/{job_uuid}/quality_map.json"
+                storage_service.upload_json(export_map, quality_key)
+                logging.info(f"  [quality] Exported quality map to MinIO ({quality_key})")
+            except Exception as e:
+                logging.warning(f"  [quality] Failed to export quality map to MinIO: {e}")
             # ------------------------
+            # --- STORY CONTEXT ANALYSIS ---
+            update_progress(15)
+            story_context = run_story_context_analysis(video_infos, vibe, directives, tmpdir)
+            
+            if story_context:
+                async def _save_story_context():
+                    async with TaskSessionLocal() as db:
+                        result = await db.execute(select(AnalysisJob).filter(AnalysisJob.id == job_uuid))
+                        job = result.scalar_one_or_none()
+                        if job:
+                            job.story_summary = story_context.get("story_summary")
+                            job.proposed_asset_order = story_context.get("asset_order")
+                            job.asset_phases = story_context.get("asset_phases")
+                            job.status = JobStatus.STORY_PROPOSED
+                            job.progress = 20
+                            await db.commit()
+                loop.run_until_complete(_save_story_context())
+                logging.info(f"  ✓ Phase 1 complete: Story proposed for Job {job_id}. Pausing for user confirmation.")
+                return
+            # ------------------------------
 
             total = len(video_infos)
             completed = [0]
@@ -1529,7 +2110,7 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
             def on_video_done():
                 with lock:
                     completed[0] += 1
-                    p = 10 + int((completed[0] / total) * 70) if total else 80
+                    p = 20 + int((completed[0] / total) * 60) if total else 80
                     update_progress(p)
 
             try:
@@ -1539,15 +2120,20 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                     video_quality_map=video_quality_map,
                     reference_paths=[],
                     directives=directives,
-                    progress_callback=on_video_done
+                    progress_callback=on_video_done,
+                    story_context=story_context
                 )
                 
                 update_progress(90)
                 async def _save_results(segs):
                     async with TaskSessionLocal() as db:
                         for idx, seg in enumerate(segs):
-                            v_idx = int(seg.get("video_idx", 0))
-                            m_asset = media_assets[v_idx] if v_idx < len(media_assets) else media_assets[0]
+                            asset_id_str = seg.get("asset_id")
+                            if asset_id_str:
+                                m_asset = next((a for a in media_assets if str(a["id"]) == asset_id_str), media_assets[0])
+                            else:
+                                v_idx = int(seg.get("video_idx", 0))
+                                m_asset = media_assets[v_idx] if v_idx < len(media_assets) else media_assets[0]
                             
                             clip = AnalyzedClip(
                                 job_id=job_uuid,
@@ -1572,6 +2158,44 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                 
                 build_reel_from_segments(final_segs, clips_dir, reel_path)
                 
+                # Check for music integration
+                if music_config and music_config.get("mode") != "none":
+                    logging.info(f"  🎵 [Pipeline] Running music selection flow. Mode: {music_config.get('mode')}")
+                    from app.services.music_service import resolve_custom_music, pick_ai_music, mix_music_into_video, resolve_suno_music
+                    import os
+                    
+                    music_path = None
+                    if music_config.get("mode") == "custom" and music_config.get("custom_query"):
+                        music_path = resolve_custom_music(music_config["custom_query"], tmpdir)
+                    elif music_config.get("mode") == "ai":
+                        music_path = pick_ai_music(vibe, final_segs, tmpdir)
+                    elif music_config.get("mode") == "suno":
+                        music_path = resolve_suno_music(
+                            vibe=vibe,
+                            final_segs=final_segs,
+                            instrumental=music_config.get("instrumental", True),
+                            tmpdir=tmpdir
+                        )
+                        if not music_path:
+                            logging.warning("Suno AI failed (likely 429 Insufficient Credits). Falling back to royalty-free 'ai' music.")
+                            music_path = pick_ai_music(vibe, final_segs, tmpdir)
+
+                        
+                    if music_path and os.path.exists(music_path):
+                        logging.info(f"  🎵 [Pipeline] Music resolved to local path: {music_path}. Mixing...")
+                        mixed_reel_path = Path(tmpdir) / "final_video_mixed.mp4"
+                        try:
+                            mix_music_into_video(str(reel_path), music_path, str(mixed_reel_path))
+                            if mixed_reel_path.exists():
+                                reel_path = mixed_reel_path
+                                logging.info("  🎵 [Pipeline] Music successfully mixed into reel video.")
+                            else:
+                                logging.warning("  ⚠️ [Pipeline] Mixed video was not created, falling back to silent video.")
+                        except Exception as mix_err:
+                            logging.error(f"  ❌ [Pipeline] Failed to mix music into video: {mix_err}. Falling back to silent video.")
+                    else:
+                        logging.warning("  ⚠️ [Pipeline] Music path could not be resolved. Falling back to silent video.")
+                
                 if reel_path.exists():
                     logging.info("  📤 [Pipeline] Uploading final video to MinIO...")
                     object_key = f"projects/{project_id}/jobs/{job_id}/final_video.mp4"
@@ -1589,6 +2213,267 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                 update_progress(0, JobStatus.FAILED, error=str(e))
                 raise
 
+    finally:
+        loop.run_until_complete(task_engine.dispose())
+        loop.close()
+
+
+@celery_app.task(bind=True)
+def continue_video_analysis(self, job_id: str, confirmed_order: list, confirmed_summary: str, confirmed_phases: dict, music_config: dict = None):
+    import uuid
+    import asyncio
+    import os
+    import requests
+    import tempfile
+    import threading
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from sqlalchemy.pool import NullPool
+    from sqlalchemy.orm import selectinload
+    from app.core.config import settings
+    from app.models.domain import AnalysisJob, Project, AnalyzedClip, JobStatus
+    
+    job_uuid = uuid.UUID(job_id)
+
+    task_engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool, echo=False)
+    TaskSessionLocal = async_sessionmaker(task_engine, expire_on_commit=False)
+    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    async def _update_progress(p: int, status: JobStatus = None, error: str = None):
+        async with TaskSessionLocal() as db:
+            result = await db.execute(select(AnalysisJob).filter(AnalysisJob.id == job_uuid))
+            job = result.scalar_one_or_none()
+            if job:
+                job.progress = p
+                if status:
+                    job.status = status
+                if error:
+                    job.error_message = error
+                await db.commit()
+
+    def update_progress(p: int, status: JobStatus = None, error: str = None):
+        loop.run_until_complete(_update_progress(p, status, error))
+
+    try:
+        update_progress(25, JobStatus.RUNNING)
+        
+        async def _get_job_details():
+            async with TaskSessionLocal() as db:
+                result = await db.execute(
+                    select(AnalysisJob)
+                    .options(selectinload(AnalysisJob.project).selectinload(Project.media_assets))
+                    .filter(AnalysisJob.id == job_uuid)
+                )
+                job = result.scalar_one_or_none()
+                if not job:
+                    raise ValueError(f"Job {job_id} not found.")
+                
+                project_id = str(job.project_id)
+                vibe = job.vibe or "cinematic"
+                sorted_assets = sorted(
+                    [a for a in job.project.media_assets if not a.is_deleted],
+                    key=lambda a: a.sequence_index
+                )
+
+                media_assets = [
+                    {
+                        "id": str(asset.id),
+                        "file_name": asset.filename,
+                        "storage_path": asset.object_key,
+                    }
+                    for asset in sorted_assets
+                ]
+                return project_id, vibe, media_assets
+                
+        project_id, vibe, media_assets = loop.run_until_complete(_get_job_details())
+        
+        from app.services.logger_service import init_run_log_dir
+        init_run_log_dir(project_id, job_id)
+        logging.info(f"  🎬 [Pipeline Phase 2] Continuing analysis for job {job_id} | vibe={vibe!r}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            video_paths = []
+            from app.services.storage_service import storage_service
+            for idx, asset in enumerate(media_assets):
+                ext = asset.get('file_name', '').split('.')[-1]
+                if not ext:
+                    ext = 'mp4'
+                local_path = os.path.join(tmpdir, f"asset_{idx}.{ext}")
+                presigned = storage_service.generate_presigned_url(asset["storage_path"])
+                r = requests.get(presigned)
+                
+                if r.status_code != 200:
+                    logging.error(f"  ❌ Failed to download {asset.get('file_name', 'unknown')} (status={r.status_code}) from MinIO.")
+                    continue
+                    
+                with open(local_path, "wb") as f:
+                    f.write(r.content)
+                
+                video_paths.append(local_path)
+                
+            video_infos = []
+            for idx, vp in enumerate(video_paths):
+                info = get_video_info(vp)
+                if info:
+                    info["asset_id"] = media_assets[idx]["id"]
+                    info["filename"] = media_assets[idx]["file_name"]
+                    video_infos.append(info)
+
+            # Sort video_infos chronologically by creation_time to ensure chronological story order mapping
+            def get_chrono_key(x):
+                ct = x.get("creation_time")
+                if not ct:
+                    return (1, "")
+                # Normalize time string to make it comparable
+                t = str(ct).strip().replace(":", "-").replace("T", " ").replace("Z", "")
+                return (0, t)
+            video_infos = sorted(video_infos, key=get_chrono_key)
+
+
+            # --- QUALITY ANALYSIS ---
+            import sys
+            from pathlib import Path
+            root_dir = str(Path(__file__).resolve().parent.parent.parent.parent)
+            if root_dir not in sys.path:
+                sys.path.append(root_dir)
+            from quality import analyze_all_videos_quality
+            
+            video_quality_map = {}
+            try:
+                from app.services.storage_service import storage_service
+                quality_key = f"projects/{project_id}/jobs/{job_uuid}/quality_map.json"
+                export_map = storage_service.download_json(quality_key)
+                
+                if export_map:
+                    for info in video_infos:
+                        filename = Path(info["path"]).name
+                        if filename in export_map:
+                            video_quality_map[info["path"]] = export_map[filename]
+                    logging.info(f"  [quality] Successfully restored quality map from MinIO for {len(video_quality_map)} videos.")
+            except Exception as e:
+                logging.warning(f"  [quality] Failed to restore quality map from MinIO: {e}")
+                
+            if not video_quality_map:
+                logging.info("  [quality] Running full quality analysis from scratch...")
+                video_quality_map = analyze_all_videos_quality(video_infos)
+            # ------------------------
+
+            total = len(video_infos)
+            completed = [0]
+            lock = threading.Lock()
+            def on_video_done():
+                with lock:
+                    completed[0] += 1
+                    p = 25 + int((completed[0] / total) * 55) if total else 80
+                    update_progress(p)
+
+            try:
+                story_context = {
+                    "story_summary": confirmed_summary,
+                    "asset_order": confirmed_order,
+                    "asset_phases": confirmed_phases
+                }
+                
+                final_segs, _all_results = run_full_analysis(
+                    video_infos,
+                    api_key=settings.NVIDIA_API_KEY,
+                    video_quality_map=video_quality_map,
+                    reference_paths=[],
+                    directives="",
+                    progress_callback=on_video_done,
+                    story_context=story_context
+                )
+                
+                update_progress(85)
+                async def _save_results(segs):
+                    async with TaskSessionLocal() as db:
+                        for idx, seg in enumerate(segs):
+                            result = await db.execute(
+                                select(Project).options(selectinload(Project.media_assets)).filter(Project.id == uuid.UUID(project_id))
+                            )
+                            proj = result.scalar_one()
+                            db_assets = sorted(
+                                [a for a in proj.media_assets if not a.is_deleted],
+                                key=lambda a: a.sequence_index
+                            )
+                            
+                            asset_id_str = seg.get("asset_id")
+                            if asset_id_str:
+                                m_asset = next((a for a in db_assets if str(a.id) == asset_id_str), db_assets[0])
+                            else:
+                                v_idx = int(seg.get("video_idx", 0))
+                                m_asset = db_assets[v_idx] if v_idx < len(db_assets) else db_assets[0]
+                            
+                            clip = AnalyzedClip(
+                                job_id=job_uuid,
+                                media_asset_id=m_asset.id,
+                                start_sec=float(seg.get("start_sec", 0.0)),
+                                end_sec=float(seg.get("end_sec", 0.0)),
+                                story_position=idx,
+                                metadata_json=seg,
+                                is_used=bool(seg.get("is_used", True))
+                            )
+                            db.add(clip)
+                        await db.commit()
+                
+                loop.run_until_complete(_save_results(final_segs))
+                
+                # Stitch the segments into a final video summary and upload to MinIO
+                logging.info("  🎬 [Pipeline Phase 2] Generating final stitched video summary...")
+                clips_dir = Path(tmpdir) / "clips"
+                reel_path = Path(tmpdir) / "final_video.mp4"
+                
+                from app.services.stitch_service import build_reel_from_segments
+                build_reel_from_segments(final_segs, clips_dir, reel_path)
+                
+                # Check for music integration
+                if music_config and music_config.get("mode") != "none":
+                    logging.info(f"  🎵 [Pipeline Phase 2] Running music selection flow. Mode: {music_config.get('mode')}")
+                    from app.services.music_service import resolve_custom_music, pick_ai_music, mix_music_into_video, resolve_suno_music
+                    
+                    music_path = None
+                    if music_config.get("mode") == "custom" and music_config.get("custom_query"):
+                        music_path = resolve_custom_music(music_config["custom_query"], tmpdir)
+                    elif music_config.get("mode") == "ai":
+                        music_path = pick_ai_music(vibe, final_segs, tmpdir)
+                    elif music_config.get("mode") == "suno":
+                        music_path = resolve_suno_music(
+                            vibe=vibe,
+                            final_segs=final_segs,
+                            instrumental=music_config.get("instrumental", True),
+                            tmpdir=tmpdir
+                        )
+                        if not music_path:
+                            logging.warning("Suno AI failed (likely 429 Insufficient Credits). Falling back to royalty-free 'ai' music.")
+                            music_path = pick_ai_music(vibe, final_segs, tmpdir)
+                        
+                    if music_path and os.path.exists(music_path):
+                        logging.info(f"  🎵 [Pipeline Phase 2] Music resolved to local path: {music_path}. Mixing...")
+                        mixed_reel_path = Path(tmpdir) / "final_video_mixed.mp4"
+                        try:
+                            mix_music_into_video(str(reel_path), music_path, str(mixed_reel_path))
+                            if mixed_reel_path.exists():
+                                reel_path = mixed_reel_path
+                                logging.info("  🎵 [Pipeline Phase 2] Music successfully mixed.")
+                        except Exception as mix_err:
+                            logging.error(f"  ❌ Failed to mix music: {mix_err}")
+                
+                if reel_path.exists():
+                    logging.info("  📤 [Pipeline Phase 2] Uploading final video to MinIO...")
+                    object_key = f"projects/{project_id}/jobs/{job_id}/final_video.mp4"
+                    with open(reel_path, "rb") as video_file:
+                        storage_service.upload_file_obj(video_file, object_key, content_type="video/mp4")
+                    logging.info(f"  ✅ [Pipeline Phase 2] Final video uploaded: {object_key}")
+                else:
+                    raise FileNotFoundError("Final video file was not created by stitcher.")
+                
+                update_progress(100, JobStatus.COMPLETED)
+                
+            except Exception as e:
+                update_progress(0, JobStatus.FAILED, error=str(e))
+                raise
+                
     finally:
         loop.run_until_complete(task_engine.dispose())
         loop.close()

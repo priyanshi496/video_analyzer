@@ -1,13 +1,13 @@
 from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Literal
 import uuid
 from sqlalchemy import or_
 
 from app.core.database import get_db
 from app.models.domain import Project, AnalysisJob, AnalyzedClip, JobStatus, User
-from app.services.pipeline_service import analyze_video_project
+from app.services.pipeline_service import analyze_video_project, continue_video_analysis
 from app.services.storage_service import storage_service
 from app.core.vibe_config import VibePreset
 from pydantic import BaseModel
@@ -17,9 +17,15 @@ from app.core.security import get_current_user
 
 router = APIRouter()
 
+class MusicRequest(BaseModel):
+    mode: Literal["ai", "custom", "none", "suno"] = "ai"
+    custom_query: Optional[str] = None      # e.g. "Satranga Arijit Singh"
+    instrumental: bool = True
+
 class AnalyzeRequest(BaseModel):
     vibe: VibePreset = VibePreset.CINEMATIC  # Preset vibe for the reel
     directives: str = ""                    # Custom free-form description (overrides/supplements vibe hint)
+    music: MusicRequest = MusicRequest()
 
 class JobStatusResponse(BaseModel):
     id: str
@@ -29,6 +35,9 @@ class JobStatusResponse(BaseModel):
     error_message: Optional[str] = None
     created_at: str
     final_video_url: Optional[str] = None
+    story_summary: Optional[str] = None
+    proposed_asset_order: Optional[List[int]] = None
+    asset_phases: Optional[Dict[str, str]] = None
 
 class AnalyzedClipResponse(BaseModel):
     id: str
@@ -64,7 +73,9 @@ async def start_analysis_job(
             project_id=project_id,
             status=JobStatus.PENDING,
             progress=0,
-            vibe=request.vibe.value
+            vibe=request.vibe.value,
+            directives=request.directives,
+            music_config=request.music.dict()
         )
         db.add(job)
         await db.commit()
@@ -85,7 +96,8 @@ async def start_analysis_job(
             job_id=str(job.id),
             media_assets=assets_data,
             directives=request.directives,
-            vibe=request.vibe.value
+            vibe=request.vibe.value,
+            music_config=request.music.dict()
         )
 
         return JobStatusResponse(
@@ -132,7 +144,10 @@ async def get_job_status(
             progress=job.progress,
             error_message=job.error_message,
             created_at=str(job.created_at),
-            final_video_url=final_video_url
+            final_video_url=final_video_url,
+            story_summary=job.story_summary,
+            proposed_asset_order=job.proposed_asset_order,
+            asset_phases=job.asset_phases
         )
     except HTTPException:
         raise
@@ -140,6 +155,82 @@ async def get_job_status(
         import traceback
         err = traceback.format_exc()
         raise HTTPException(status_code=500, detail=str(err))
+
+from typing import List, Dict, Optional
+class ConfirmStoryRequest(BaseModel):
+    rewrite_instructions: Optional[str] = None
+
+@router.post("/jobs/{job_id}/confirm-story", response_model=JobStatusResponse)
+async def confirm_story_context(
+    job_id: uuid.UUID,
+    request: ConfirmStoryRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        job_result = await db.execute(
+            select(AnalysisJob)
+            .join(Project, Project.id == AnalysisJob.project_id)
+            .filter(AnalysisJob.id == job_id, or_(Project.user_id == current_user.id, Project.user_id == None))
+        )
+        job = job_result.scalar_one_or_none()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        if job.status != JobStatus.STORY_PROPOSED:
+            raise HTTPException(status_code=400, detail=f"Job status must be STORY_PROPOSED to confirm story, current status is {job.status}")
+
+        # 1. Update Story Summary
+        final_asset_order = job.proposed_asset_order
+        if request.rewrite_instructions and request.rewrite_instructions.strip() not in ["", "string"]:
+            from app.services.llm_service import rewrite_story_summary
+            import logging
+            logging.info(f"Rewriting story based on user instructions: {request.rewrite_instructions}")
+            new_summary = rewrite_story_summary(job.story_summary, request.rewrite_instructions)
+            job.story_summary = new_summary
+            
+            # CRITICAL: The old proposed asset order is now stale and contradicts the new story!
+            # We must nullify it so Phase 2 does NOT pre-sort the clips incorrectly based on the old story.
+            final_asset_order = []
+
+        # 2. Update or Fallback Array Fields
+        final_asset_phases = job.asset_phases
+
+        job.confirmed_asset_order = final_asset_order
+        job.asset_phases = final_asset_phases
+        job.status = JobStatus.RUNNING
+        job.progress = 25
+        await db.commit()
+        await db.refresh(job)
+
+        # Trigger Celery Task Phase 2
+        continue_video_analysis.delay(
+            job_id=str(job.id),
+            confirmed_order=final_asset_order,
+            confirmed_summary=job.story_summary,  # Pass the safe DB value, not the raw request
+            confirmed_phases=final_asset_phases,
+            music_config=job.music_config
+        )
+
+        return JobStatusResponse(
+            id=str(job.id),
+            project_id=str(job.project_id),
+            status=job.status,
+            progress=job.progress,
+            error_message=job.error_message,
+            created_at=str(job.created_at),
+            final_video_url=None,
+            story_summary=job.story_summary,
+            proposed_asset_order=job.proposed_asset_order,
+            asset_phases=job.asset_phases
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        err = traceback.format_exc()
+        raise HTTPException(status_code=500, detail=str(err))
+
 
 class TimelineResponse(BaseModel):
     active_segments: List[AnalyzedClipResponse]

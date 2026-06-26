@@ -207,3 +207,103 @@ async def list_media(
 
     return response
 
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_project(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Verify project exists and belongs to the user (or is unowned)
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            or_(Project.user_id == current_user.id, Project.user_id == None)
+        )
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Get all media assets associated with this project (including deleted ones)
+    assets_result = await db.execute(
+        select(MediaAsset).where(MediaAsset.project_id == project_id)
+    )
+    assets = assets_result.scalars().all()
+
+    # Delete media assets files from MinIO
+    for asset in assets:
+        try:
+            await asyncio.to_thread(storage_service.delete_object, asset.object_key)
+        except Exception as e:
+            import logging
+            logging.warning(f"Failed to delete MinIO object {asset.object_key}: {e}")
+
+    # Delete related clips, jobs, and media assets manually to prevent FK constraint failures
+    from app.models.domain import AnalysisJob, AnalyzedClip
+    
+    # 1. Delete AnalyzedClips related to any AnalysisJob of this project
+    jobs_result = await db.execute(
+        select(AnalysisJob.id).where(AnalysisJob.project_id == project_id)
+    )
+    job_ids = jobs_result.scalars().all()
+    if job_ids:
+        from sqlalchemy import delete
+        await db.execute(
+            delete(AnalyzedClip).where(AnalyzedClip.job_id.in_(job_ids))
+        )
+        await db.execute(
+            delete(AnalysisJob).where(AnalysisJob.project_id == project_id)
+        )
+        
+    # 2. Delete Media Assets
+    from sqlalchemy import delete
+    await db.execute(
+        delete(MediaAsset).where(MediaAsset.project_id == project_id)
+    )
+
+    # 3. Delete Project
+    await db.delete(project)
+    await db.commit()
+
+
+@router.delete("/{project_id}/media/{media_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_media_asset(
+    project_id: uuid.UUID,
+    media_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Verify project exists and belongs to the user
+    proj_result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            or_(Project.user_id == current_user.id, Project.user_id == None)
+        )
+    )
+    if not proj_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Find the media asset
+    asset_result = await db.execute(
+        select(MediaAsset).where(
+            MediaAsset.id == media_id,
+            MediaAsset.project_id == project_id,
+            MediaAsset.is_deleted == False
+        )
+    )
+    asset = asset_result.scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Media asset not found")
+
+    # Delete file from MinIO
+    try:
+        await asyncio.to_thread(storage_service.delete_object, asset.object_key)
+    except Exception as e:
+        import logging
+        logging.warning(f"Failed to delete MinIO object {asset.object_key}: {e}")
+
+    # Mark as deleted in DB (to prevent violating FK constraint in analyzed_clips)
+    asset.is_deleted = True
+    await db.commit()
+
+

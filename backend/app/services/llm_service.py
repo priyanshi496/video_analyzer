@@ -290,15 +290,15 @@ def call_openrouter_multiimage(
             try:
                 from app.services.prompts_service import parse_json_response
                 parsed = parse_json_response(result)
-                if not isinstance(parsed, dict) or ("best_segments" not in parsed and "segments" not in parsed and "journey_phase" not in parsed):
-                    raise ValueError("Parsed JSON response is missing required highlight segments keys.")
+                if not isinstance(parsed, dict) or ("best_segments" not in parsed and "segments" not in parsed and "journey_phase" not in parsed and "asset_order" not in parsed and "asset_descriptions" not in parsed):
+                    raise ValueError("Parsed JSON response is missing required highlight segments or story context keys.")
                 return result
             except Exception as je:
                 logger.warning(f"  ✗ {model_name} returned invalid structure: {je}. Attempting repair...")
                 try:
                     repaired_raw = repair_json_output_text(result)
                     parsed = parse_json_response(repaired_raw)
-                    if isinstance(parsed, dict) and ("best_segments" in parsed or "segments" in parsed or "journey_phase" in parsed):
+                    if isinstance(parsed, dict) and ("best_segments" in parsed or "segments" in parsed or "journey_phase" in parsed or "asset_order" in parsed or "asset_descriptions" in parsed):
                         return repaired_raw
                 except Exception as re:
                     pass
@@ -332,3 +332,20 @@ def call_openrouter_text(prompt: str, model: str, fallbacks: list = None, temper
 def repair_json_output_text(bad_text: str) -> str:
     prompt = f"You are a JSON repair assistant... (Schema omitted for brevity, fix this: {bad_text})"
     return call_openrouter_text(prompt, model="openrouter/owl-alpha")
+
+def rewrite_story_summary(current_summary: str, instructions: str) -> str:
+    prompt = f"""You are an elite creative writer and travel video editor.
+Here is the current story summary for a travel reel:
+\"\"\"
+{current_summary}
+\"\"\"
+
+The user has provided the following instructions to change the story:
+\"\"\"
+{instructions}
+\"\"\"
+
+Please rewrite the story summary to perfectly reflect the user's instructions.
+Return ONLY the newly written paragraph. Do not include any explanations, preambles, or markdown formatting. Keep the tone cinematic, emotional, and highly engaging.
+"""
+    return call_openrouter_text(prompt, model="openai/gpt-4o-mini", fallbacks=["google/gemini-flash-1.5-8b"], temperature=0.7)

@@ -23,6 +23,7 @@ class VibePreset(str, Enum):
     CINEMATIC   = "cinematic"
     NOSTALGIC   = "nostalgic"
     ADVENTUROUS = "adventurous"
+    GARBA       = "garba"
 
 
 # ── Vibe → Rendering Mapping Table ────────────────────────────────────────────
@@ -87,6 +88,14 @@ VIBE_MAP: dict[str, dict] = {
             "Prioritize clips with movement, exploration, and discovery. Favor outdoor action shots, "
             "travel moments, physical activity, and wide scenic vistas. "
             "Build an arc from departure to arrival or challenge to triumph."
+        ),
+    },
+    VibePreset.GARBA: {
+        "transitions":    "hard_cut",
+        "music_genre":    "garba_festive",
+        "ai_prompt_hint": (
+            "Prioritize festive, energetic, and celebratory clips of traditional dancing, Garba circles, "
+            "vibrant outfits, and joyful expressions. Focus on rhythmic movement and high-tempo action."
         ),
     },
 }
