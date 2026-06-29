@@ -111,7 +111,7 @@ def expand_short_query(query: str) -> str:
         logger.error(f"Failed to expand query via LLM: {e}")
         return f"{query} official audio"
 
-def resolve_custom_music(custom_query: str, tmpdir: str) -> str:
+def resolve_custom_music(custom_query: str, tmpdir: str, skip_llm_expand: bool = False) -> str:
     """
     Resolves custom song query. If the query matches (or partially matches)
     a song track/keyword/slug in the preseeded catalog, it directly returns
@@ -152,9 +152,13 @@ def resolve_custom_music(custom_query: str, tmpdir: str) -> str:
         minio_key = f"music/catalog/{slug}.mp3"
         return resolve_song_by_key(minio_key, catalog_match["query"], tmpdir)
 
-    # Cache miss on pre-seeded catalog -> Expand query using LLM and check custom cache
-    logger.info(f"Custom query '{custom_query}' not found in pre-seeded catalog. Expanding via LLM...")
-    expanded = expand_short_query(custom_query)
+    # Cache miss on pre-seeded catalog -> Expand query if not skipped, check custom cache
+    logger.info(f"Custom query '{custom_query}' not found in pre-seeded catalog.")
+    if skip_llm_expand:
+        expanded = f"{custom_query} official audio"
+    else:
+        logger.info("Expanding via LLM...")
+        expanded = expand_short_query(custom_query)
     logger.info(f"Expanded custom query: '{expanded}'")
     
     slug = get_song_slug(expanded)

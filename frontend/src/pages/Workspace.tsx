@@ -28,6 +28,10 @@ import CompletedCard from '../components/workspace/CompletedCard';
 import FailedCard from '../components/workspace/FailedCard';
 import ChatInputBar from '../components/workspace/ChatInputBar';
 import VideoEditorModal from '../components/workspace/VideoEditorModal';
+import { TemplatePicker } from '../components/workspace/TemplatePicker';
+import { TemplateEditor } from '../components/workspace/TemplateEditor';
+import { templatesService } from '../services/templates';
+import type { VideoTemplate } from '../services/templates';
 
 // Chat flow phases
 type ChatPhase =
@@ -121,6 +125,7 @@ export default function Workspace() {
     project,
     mediaAssets,
     job,
+    setJob,
     jobHistory,
     loading,
     uploading,
@@ -151,6 +156,24 @@ export default function Workspace() {
   const [inputText, setInputText] = useState('');
   const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null);
   const [showEditorUrl, setShowEditorUrl] = useState<string | null>(null);
+
+  // Templates Mode States
+  const [activeMode, setActiveMode] = useState<'ai' | 'templates'>('ai');
+  const [selectedTemplate, setSelectedTemplate] = useState<VideoTemplate | null>(null);
+
+  const handleTemplateRender = async (slotsMapping: any) => {
+    try {
+      setChatPhase('processing'); // Go to processing state to show progress
+      setActiveMode('ai'); // Go back to AI tab to view rendering progress bubble
+      const res = await templatesService.renderFromTemplate(projectId || '', selectedTemplate!.id, slotsMapping);
+      setJob(res);
+      setSelectedTemplate(null);
+    } catch (e: any) {
+      console.error(e);
+      alert(`Template render failed: ${e.message || e}`);
+      setChatPhase('failed');
+    }
+  };
 
   const handleStartRename = () => {
     setTempName(project?.name || '');
@@ -410,6 +433,34 @@ export default function Workspace() {
         </div>
       )}
 
+      {/* Mode Switcher */}
+      {chatPhase !== 'upload' && !['processing', 'rendering'].includes(chatPhase) && (
+        <div className="flex justify-center my-3 flex-shrink-0">
+          <div className="bg-zinc-200/80 p-1 rounded-full flex gap-1 shadow-inner border border-white/10">
+            <button
+              onClick={() => setActiveMode('ai')}
+              className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+                activeMode === 'ai'
+                  ? 'bg-orange-500 text-white shadow-sm'
+                  : 'text-zinc-600 hover:text-zinc-950'
+              }`}
+            >
+              🤖 Smart AI
+            </button>
+            <button
+              onClick={() => setActiveMode('templates')}
+              className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+                activeMode === 'templates'
+                  ? 'bg-orange-500 text-white shadow-sm'
+                  : 'text-zinc-600 hover:text-zinc-950'
+              }`}
+            >
+              🎬 Layout Templates
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* PHASE: Upload (no media) */}
       {chatPhase === 'upload' && (
         <UploadPhase
@@ -420,8 +471,30 @@ export default function Workspace() {
         />
       )}
 
+      {/* Templates Mode View */}
+      {chatPhase !== 'upload' && activeMode === 'templates' && (
+        <div className="flex-1 overflow-y-auto px-5 pb-6 flex flex-col items-center">
+          <div className="w-full max-w-5xl">
+            {selectedTemplate ? (
+              <TemplateEditor
+                template={selectedTemplate}
+                projectId={projectId || ''}
+                mediaAssets={mediaAssets}
+                onBack={() => setSelectedTemplate(null)}
+                onRender={handleTemplateRender}
+              />
+            ) : (
+              <TemplatePicker
+                onSelect={(tmpl) => setSelectedTemplate(tmpl)}
+                onClose={() => setActiveMode('ai')}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
       {/* PHASE: Chat (has media) */}
-      {chatPhase !== 'upload' && (
+      {chatPhase !== 'upload' && activeMode === 'ai' && (
         <>
           {/* Scrollable chat area */}
           <div className="flex-1 overflow-y-auto custom-scroll w-full">

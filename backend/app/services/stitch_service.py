@@ -134,6 +134,7 @@ def trim_and_normalize_clip(
     height: int = 1920,
     fps: int = 30,
     rotation: int = 0,
+    text: str = None,
 ) -> str:
     path_obj = Path(video_path)
     if not path_obj.exists():
@@ -224,6 +225,30 @@ def trim_and_normalize_clip(
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
             f"fps={fps}"
         )
+
+    if text:
+        from app.services.universal_renderer import _drawtext_available
+        if _drawtext_available():
+            # Discover local font file to prevent missing font errors
+            font_paths = [
+                "/System/Library/Fonts/Supplemental/Arial.ttf",
+                "/System/Library/Fonts/Helvetica.ttc",
+                "/Library/Fonts/Arial.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            ]
+            font_file = next((p for p in font_paths if os.path.exists(p)), None)
+
+            escaped_text = text.replace("'", "'\\''").replace(":", "\\:").replace("\n", " ")
+            drawtext_filter = f",drawtext=text='{escaped_text}'"
+            if font_file:
+                drawtext_filter += f":fontfile='{font_file}'"
+            drawtext_filter += (
+                f":fontcolor=white:fontsize=48:x=(w-text_w)/2:y=h-250:"
+                f"box=1:boxcolor=black@0.5:boxborderw=15"
+            )
+            vf_filter += drawtext_filter
+        else:
+            logging.getLogger(__name__).warning("drawtext filter not available — skipping text overlay")
 
     if is_image:
         cmd = [

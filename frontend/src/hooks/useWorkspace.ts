@@ -138,6 +138,7 @@ export function useWorkspace(projectId: string) {
     project,
     mediaAssets,
     job,
+    setJob,
     jobHistory,
     loading,
     uploading,
