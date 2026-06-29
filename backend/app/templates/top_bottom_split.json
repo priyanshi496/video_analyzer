@@ -1,0 +1,28 @@
+{
+  "id": "top_bottom_split",
+  "name": "Top Bottom Split",
+  "description": "Screen splits horizontally — two clips play simultaneously top and bottom.",
+  "aspect_ratio": "9:16",
+  "canvas": { "w": 1080, "h": 1920, "fps": 30 },
+  "music_mode": "ai",
+  "music_query": "chill lo-fi, smooth beats, relaxed vibe",
+  "total_duration": 10.0,
+  "slots": [
+    { "id": "slot_1", "label": "Top half" },
+    { "id": "slot_2", "label": "Bottom half" }
+  ],
+  "tracks": [
+    {
+      "slot_id": "slot_1", "type": "video",
+      "start": 0.0, "end": 10.0,
+      "layout": { "x": 0, "y": 0,    "w": 1080, "h": 960 },
+      "transition_in": { "type": "fade", "duration": 0.4 }
+    },
+    {
+      "slot_id": "slot_2", "type": "video",
+      "start": 0.0, "end": 10.0,
+      "layout": { "x": 0, "y": 960,  "w": 1080, "h": 960 },
+      "transition_in": { "type": "fade", "duration": 0.4 }
+    }
+  ]
+}

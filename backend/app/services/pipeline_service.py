@@ -2554,3 +2554,273 @@ def continue_video_analysis(self, job_id: str, confirmed_order: list, confirmed_
         loop.run_until_complete(task_engine.dispose())
         loop.close()
 
+
+@celery_app.task(bind=True)
+def render_project_from_template(self, project_id: str, job_id: str, template_id: str, slots: list):
+    """
+    Renders a video according to a locked template specification.
+    `slots` is a list of dicts: {"slot_id": str, "object_key": str or None, "text": str or None}
+    """
+    import asyncio
+    import os
+    import json
+    import tempfile
+    import requests
+    import logging
+    import uuid
+    from pathlib import Path
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from sqlalchemy import update
+    from sqlalchemy.pool import NullPool
+    
+    from app.core.config import settings
+    from app.models.domain import AnalysisJob, JobStatus
+    from app.services.storage_service import storage_service
+    from app.services.stitch_service import trim_and_normalize_clip, build_reel_from_segments
+    
+    # Establish a local task loop
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+    task_engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool, echo=False)
+    TaskSessionLocal = async_sessionmaker(task_engine, expire_on_commit=False)
+    
+    async def _update_progress(p: int, status: JobStatus = None, error: str = None):
+        async with TaskSessionLocal() as session:
+            stmt = update(AnalysisJob).where(AnalysisJob.id == uuid.UUID(job_id)).values(progress=p)
+            if status:
+                stmt = stmt.values(status=status)
+            if error:
+                stmt = stmt.values(error_message=error)
+            await session.execute(stmt)
+            await session.commit()
+            
+    def update_progress(p: int, status: JobStatus = None, error: str = None):
+        loop.run_until_complete(_update_progress(p, status, error))
+        
+    try:
+        update_progress(10, JobStatus.RUNNING)
+        logging.info(f"🎬 [Template Engine] Starting render job {job_id} | project={project_id} | template={template_id}")
+        
+        # 1. Load the template definition
+        templates_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "templates")
+        template_path = os.path.join(templates_dir, f"{template_id}.json")
+        if not os.path.exists(template_path):
+            raise FileNotFoundError(f"Template {template_id} definition not found.")
+            
+        with open(template_path, "r", encoding="utf-8") as f:
+            template = json.load(f)
+            
+        # 2. Match user input to template slots and download files
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_dir_path = Path(tmpdir)
+            processed_segments = []
+            
+            # slots: [{"slot_id": str, "object_key": str or None, "text": str or None}]
+            user_slots = {s["slot_id"]: s for s in slots}
+            
+            story_position = 0
+            for slot_conf in template["slots"]:
+                slot_id = slot_conf["id"]
+                user_input = user_slots.get(slot_id)
+                
+                # Check if slot is deleted/omitted
+                if not user_input or not user_input.get("object_key"):
+                    if slot_conf.get("deletable", False):
+                        logging.info(f"🎬 [Template Engine] Skipping deleted slot: {slot_id}")
+                        continue
+                    else:
+                        raise ValueError(f"Required slot {slot_id} is missing an asset mapping.")
+                        
+                # Download media asset
+                object_key = user_input["object_key"]
+                ext = object_key.split('.')[-1] if '.' in object_key else 'mp4'
+                local_raw_path = temp_dir_path / f"raw_{slot_id}.{ext}"
+                
+                logging.info(f"🎬 [Template Engine] Downloading {object_key} for {slot_id}...")
+                presigned = storage_service.generate_presigned_url(object_key)
+                r = requests.get(presigned)
+                if r.status_code != 200:
+                    raise RuntimeError(f"Failed to download asset {object_key} from storage.")
+                with open(local_raw_path, "wb") as f:
+                    f.write(r.content)
+                    
+                # Get duration from tracks array instead of slot config
+                slot_id = slot_conf["id"]
+                slot_tracks = [t for t in template.get("tracks", []) if t.get("slot_id") == slot_id and t["type"] == "video"]
+                duration = max((t["end"] - t["start"]) for t in slot_tracks) if slot_tracks else 5.0
+                # Always pass user-supplied text; the renderer uses it if set,
+                # regardless of whether the slot config has text_overlay defined
+                # (text config lives in the tracks array for landscape-style templates)
+                custom_text = user_input.get("text")
+                
+                processed_segments.append({
+                    "video_path": str(local_raw_path),
+                    "start_sec": 0.0,
+                    "end_sec": duration,
+                    "story_position": story_position,
+                    "story_role": "clip",
+                    "text": custom_text,
+                    "slot_id": slot_id,
+                    "next_transition": slot_conf.get("transition_out", "fade"),
+                    "next_transition_duration": 0.5
+                })
+                story_position += 1
+                
+            update_progress(50)
+            
+            # 3. Trim each clip and burn text overlays if configured.
+            # IMPORTANT: For templates with a "tracks" array the universal renderer
+            # handles text drawing at canvas-space coordinates. Do NOT burn text at
+            # the clip level here — it will end up at the wrong position/size because
+            # each clip is later cropped to a small strip on the canvas.
+            clips_dir = temp_dir_path / "clips"
+            clips_dir.mkdir(exist_ok=True)
+            ordered_clip_paths = []
+            uses_universal_renderer = "tracks" in template
+
+            for idx, seg in enumerate(processed_segments):
+                out_clip_path = clips_dir / f"clip_{idx:02d}.mp4"
+                # Only burn clip-level text for non-universal (linear) templates
+                clip_text = None if uses_universal_renderer else seg["text"]
+                logging.info(f"🎬 [Template Engine] Trimming slot {idx} to {seg['end_sec']}s (Text: {seg['text']})...")
+                trim_and_normalize_clip(
+                    video_path=seg["video_path"],
+                    start_sec=seg["start_sec"],
+                    end_sec=seg["end_sec"],
+                    out_path=out_clip_path,
+                    text=clip_text
+                )
+                ordered_clip_paths.append(str(out_clip_path))
+                
+            update_progress(70)
+            
+            # 4. Stitch clips together
+            layout_mode = template.get("layout_mode", "linear")
+            
+            if "tracks" in template:
+                logging.info("🎬 [Template Engine] Using universal renderer...")
+                from app.services.universal_renderer import render_universal_template
+                
+                # Map user custom texts from slots payload onto template text tracks
+                for track in template.get("tracks", []):
+                    if track.get("type") == "text":
+                        track_slot_id = track.get("slot_id")
+                        if track_slot_id in user_slots:
+                            user_text = user_slots[track_slot_id].get("text")
+                            if user_text is not None:
+                                if "content" not in track:
+                                    track["content"] = {}
+                                track["content"]["value"] = user_text
+                                logging.info(f"📝 [Template Engine] Set text for {track_slot_id}: '{user_text}'")
+
+                clip_paths = {
+                    seg["slot_id"]: ordered_clip_paths[idx]
+                    for idx, seg in enumerate(processed_segments)
+                }
+                reel_path = temp_dir_path / "stitched_reel.mp4"
+                render_universal_template(
+                    clip_paths=clip_paths,
+                    output_path=str(reel_path),
+                    template=template,
+                )
+            elif layout_mode == "beat_grid":
+                logging.info("🎬 [Template Engine] Using beat-grid renderer...")
+                from app.services.beat_grid_renderer import render_beat_grid_template
+                
+                # Build { slot_id: local_clip_path } map
+                clip_paths = {
+                    seg["slot_id"]: ordered_clip_paths[idx]   # ✅ trimmed file
+                    for idx, seg in enumerate(processed_segments)
+                }
+                reel_path = temp_dir_path / "stitched_reel.mp4"
+                render_beat_grid_template(
+                    clip_paths=clip_paths,
+                    output_path=str(reel_path),
+                    section_config=template["sections"],
+                )
+            else:
+                reel_path = temp_dir_path / "stitched_reel.mp4"
+                transitions = [seg["next_transition"] for seg in processed_segments[:-1]]
+                transition_durations = [0.5] * len(transitions)
+                
+                stitched_segments = []
+                for idx, clip_p in enumerate(ordered_clip_paths):
+                    stitched_segments.append({
+                        "video_path": clip_p,
+                        "start_sec": 0.0,
+                        "end_sec": processed_segments[idx]["end_sec"],
+                        "story_position": idx,
+                        "is_used": True
+                    })
+                    
+                build_reel_from_segments(
+                    best_segments=stitched_segments,
+                    clips_dir=temp_dir_path / "stitch_temp",
+                    reel_path=reel_path,
+                    transitions=transitions,
+                    transition_durations=transition_durations
+                )
+            
+            update_progress(85)
+            
+            # 5. Mix music background
+            music_mode = template.get("music_mode", "ai")
+            music_query = template.get("music_query")
+            music_file  = template.get("music_file")  # relative path for static mode
+
+            if music_mode == "static" and music_file:
+                # Use a bundled local audio file (relative to backend root)
+                backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                static_music_path = os.path.join(backend_root, music_file)
+                if os.path.exists(static_music_path):
+                    logging.info(f"🎵 [Template Engine] Using static music: {static_music_path}")
+                    mixed_reel_path = temp_dir_path / "final_video_mixed.mp4"
+                    try:
+                        from app.services.music_service import mix_music_into_video
+                        mix_music_into_video(str(reel_path), static_music_path, str(mixed_reel_path))
+                        if mixed_reel_path.exists():
+                            reel_path = mixed_reel_path
+                            logging.info("🎵 [Template Engine] Static music successfully mixed.")
+                    except Exception as mix_err:
+                        logging.error(f"❌ [Template Engine] Failed to mix static music: {mix_err}")
+                else:
+                    logging.warning(f"⚠️ [Template Engine] Static music file not found: {static_music_path}. Skipping music.")
+
+            elif music_mode != "none" and music_query:
+                logging.info(f"🎵 [Template Engine] Adding template music background: {music_query}...")
+                from app.services.music_service import resolve_custom_music, mix_music_into_video
+                music_path = resolve_custom_music(music_query, tmpdir, skip_llm_expand=True)
+                if music_path and os.path.exists(music_path):
+                    mixed_reel_path = temp_dir_path / "final_video_mixed.mp4"
+                    try:
+                        mix_music_into_video(str(reel_path), music_path, str(mixed_reel_path))
+                        if mixed_reel_path.exists():
+                            reel_path = mixed_reel_path
+                            logging.info("🎵 [Template Engine] Music successfully mixed.")
+                    except Exception as mix_err:
+                        logging.error(f"❌ [Template Engine] Failed to mix music: {mix_err}")
+                        
+            # 6. Upload final video back to MinIO
+            if reel_path.exists():
+                logging.info("📤 [Template Engine] Uploading final output to MinIO...")
+                object_key = f"projects/{project_id}/jobs/{job_id}/final_video.mp4"
+                with open(reel_path, "rb") as video_file:
+                    storage_service.upload_file_obj(video_file, object_key, content_type="video/mp4")
+                logging.info(f"✅ [Template Engine] Video uploaded: {object_key}")
+            else:
+                raise FileNotFoundError("Final video was not found.")
+                
+            update_progress(100, JobStatus.COMPLETED)
+            
+    except Exception as e:
+        import traceback
+        logging.error(f"❌ [Template Engine] Job failed: {e}\n{traceback.format_exc()}")
+        update_progress(0, JobStatus.FAILED, error=str(e))
+        raise
+        
+    finally:
+        loop.run_until_complete(task_engine.dispose())

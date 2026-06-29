@@ -1,0 +1,230 @@
+{
+  "id": "vacation_reveal",
+  "name": "Vacation Reveal",
+  "description": "8-strip reveal intro, 4-grid drop, then beat-synced fullscreen cuts.",
+  "aspect_ratio": "9:16",
+  "canvas": { "w": 1080, "h": 1920, "fps": 30 },
+  "music_mode": "ai",
+  "music_query": "Vacation by Connie Francis, upbeat classic pop",
+  "total_duration": 10.29,
+  "slots": [
+    { "id": "slot_s1", "label": "Reveal Strip 1 ('V')" },
+    { "id": "slot_s2", "label": "Reveal Strip 2 ('A')" },
+    { "id": "slot_s3", "label": "Reveal Strip 3 ('C')" },
+    { "id": "slot_s4", "label": "Reveal Strip 4 ('A')" },
+    { "id": "slot_s5", "label": "Reveal Strip 5 ('T')" },
+    { "id": "slot_s6", "label": "Reveal Strip 6 ('I')" },
+    { "id": "slot_s7", "label": "Reveal Strip 7 ('O')" },
+    { "id": "slot_s8", "label": "Reveal Strip 8 ('N')" },
+    { "id": "slot_full_intro", "label": "Full image replaces strips (3.00-3.25s)" },
+    { "id": "slot_g1", "label": "Grid top-left (3.25-4.20s)" },
+    { "id": "slot_g2", "label": "Grid top-right (3.40-4.20s)" },
+    { "id": "slot_g3", "label": "Grid bottom-left (3.55-4.20s)" },
+    { "id": "slot_g4", "label": "Grid bottom-right (3.70-4.20s)" },
+    { "id": "slot_f1", "label": "Beat clip 1 (4.20-4.50s)" },
+    { "id": "slot_f2", "label": "Beat clip 2 (4.50-5.50s)" },
+    { "id": "slot_f3", "label": "Beat clip 3 (5.50-5.75s)" },
+    { "id": "slot_f4", "label": "Beat clip 4 (5.75-6.00s)" },
+    { "id": "slot_f5", "label": "Beat clip 5 (6.00-6.25s)" },
+    { "id": "slot_f6", "label": "Beat clip 6 (6.25-6.75s)" },
+    { "id": "slot_f7", "label": "Beat clip 7 (6.75-7.00s)" },
+    { "id": "slot_f8", "label": "Beat clip 8 (7.00-8.00s)" },
+    { "id": "slot_f9", "label": "Beat clip 9 (8.00-8.50s)" },
+    { "id": "slot_f10", "label": "Beat clip 10 (8.50-9.50s)" },
+    { "id": "slot_f11", "label": "Beat clip 11 (9.50-10.29s)" }
+  ],
+  "tracks": [
+    {
+      "slot_id": "slot_s1", "type": "video",
+      "start": 0.499, "end": 3.00,
+      "layout": { "x": 0, "y": 0, "w": 135, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_s2", "type": "video",
+      "start": 0.582, "end": 3.00,
+      "layout": { "x": 135, "y": 0, "w": 135, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_s3", "type": "video",
+      "start": 0.665, "end": 3.00,
+      "layout": { "x": 270, "y": 0, "w": 135, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_s4", "type": "video",
+      "start": 0.748, "end": 3.00,
+      "layout": { "x": 405, "y": 0, "w": 135, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_s5", "type": "video",
+      "start": 0.831, "end": 3.00,
+      "layout": { "x": 540, "y": 0, "w": 135, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_s6", "type": "video",
+      "start": 0.914, "end": 3.00,
+      "layout": { "x": 675, "y": 0, "w": 135, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_s7", "type": "video",
+      "start": 0.981, "end": 3.00,
+      "layout": { "x": 810, "y": 0, "w": 135, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_s8", "type": "video",
+      "start": 1.064, "end": 3.00,
+      "layout": { "x": 945, "y": 0, "w": 135, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "type": "text", "slot_id": "slot_s1",
+      "start": 0.499, "end": 3.00,
+      "content": { "editable": false, "value": "V" },
+      "style": { "size": 130, "color": "#FFFFFF", "x": 67, "y": 920, "align": "center" }
+    },
+    {
+      "type": "text", "slot_id": "slot_s2",
+      "start": 0.582, "end": 3.00,
+      "content": { "editable": false, "value": "A" },
+      "style": { "size": 130, "color": "#FFFFFF", "x": 202, "y": 920, "align": "center" }
+    },
+    {
+      "type": "text", "slot_id": "slot_s3",
+      "start": 0.665, "end": 3.00,
+      "content": { "editable": false, "value": "C" },
+      "style": { "size": 130, "color": "#FFFFFF", "x": 337, "y": 920, "align": "center" }
+    },
+    {
+      "type": "text", "slot_id": "slot_s4",
+      "start": 0.748, "end": 3.00,
+      "content": { "editable": false, "value": "A" },
+      "style": { "size": 130, "color": "#FFFFFF", "x": 472, "y": 920, "align": "center" }
+    },
+    {
+      "type": "text", "slot_id": "slot_s5",
+      "start": 0.831, "end": 3.00,
+      "content": { "editable": false, "value": "T" },
+      "style": { "size": 130, "color": "#FFFFFF", "x": 607, "y": 920, "align": "center" }
+    },
+    {
+      "type": "text", "slot_id": "slot_s6",
+      "start": 0.914, "end": 3.00,
+      "content": { "editable": false, "value": "I" },
+      "style": { "size": 130, "color": "#FFFFFF", "x": 742, "y": 920, "align": "center" }
+    },
+    {
+      "type": "text", "slot_id": "slot_s7",
+      "start": 0.981, "end": 3.00,
+      "content": { "editable": false, "value": "O" },
+      "style": { "size": 130, "color": "#FFFFFF", "x": 877, "y": 920, "align": "center" }
+    },
+    {
+      "type": "text", "slot_id": "slot_s8",
+      "start": 1.064, "end": 3.00,
+      "content": { "editable": false, "value": "N" },
+      "style": { "size": 130, "color": "#FFFFFF", "x": 1012, "y": 920, "align": "center" }
+    },
+    {
+      "slot_id": "slot_full_intro", "type": "video",
+      "start": 3.00, "end": 3.25,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_g1", "type": "video",
+      "start": 3.25, "end": 4.20,
+      "layout": { "x": 0, "y": 0, "w": 540, "h": 960 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_g2", "type": "video",
+      "start": 3.40, "end": 4.20,
+      "layout": { "x": 540, "y": 0, "w": 540, "h": 960 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_g3", "type": "video",
+      "start": 3.55, "end": 4.20,
+      "layout": { "x": 0, "y": 960, "w": 540, "h": 960 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_g4", "type": "video",
+      "start": 3.70, "end": 4.20,
+      "layout": { "x": 540, "y": 960, "w": 540, "h": 960 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_f1", "type": "video",
+      "start": 4.20, "end": 4.50,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_f2", "type": "video",
+      "start": 4.50, "end": 5.50,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_f3", "type": "video",
+      "start": 5.50, "end": 5.75,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_f4", "type": "video",
+      "start": 5.75, "end": 6.00,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_f5", "type": "video",
+      "start": 6.00, "end": 6.25,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_f6", "type": "video",
+      "start": 6.25, "end": 6.75,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_f7", "type": "video",
+      "start": 6.75, "end": 7.00,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_f8", "type": "video",
+      "start": 7.00, "end": 8.00,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_f9", "type": "video",
+      "start": 8.00, "end": 8.50,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_f10", "type": "video",
+      "start": 8.50, "end": 9.50,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_f11", "type": "video",
+      "start": 9.50, "end": 10.29,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "id": "triple_slam",
+  "name": "Triple Slam",
+  "description": "Three vertical strips slam in side by side on the beat.",
+  "aspect_ratio": "9:16",
+  "canvas": { "w": 1080, "h": 1920, "fps": 30 },
+  "music_mode": "ai",
+  "music_query": "aggressive trap, heavy bass, hype beat",
+  "total_duration": 10.0,
+  "slots": [
+    { "id": "slot_1", "label": "Opener" },
+    { "id": "slot_2", "label": "Left strip" },
+    { "id": "slot_3", "label": "Middle strip" },
+    { "id": "slot_4", "label": "Right strip" }
+  ],
+  "tracks": [
+    {
+      "slot_id": "slot_1", "type": "video",
+      "start": 0.0, "end": 3.0,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_2", "type": "video",
+      "start": 3.0, "end": 10.0,
+      "layout": { "x": 0,   "y": 0, "w": 360, "h": 1920 },
+      "transition_in": { "type": "slam", "delay": 0.0 }
+    },
+    {
+      "slot_id": "slot_3", "type": "video",
+      "start": 3.0, "end": 10.0,
+      "layout": { "x": 360, "y": 0, "w": 360, "h": 1920 },
+      "transition_in": { "type": "slam", "delay": 0.2 }
+    },
+    {
+      "slot_id": "slot_4", "type": "video",
+      "start": 3.0, "end": 10.0,
+      "layout": { "x": 720, "y": 0, "w": 360, "h": 1920 },
+      "transition_in": { "type": "slam", "delay": 0.4 }
+    }
+  ]
+}
