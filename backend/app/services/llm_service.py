@@ -358,3 +358,16 @@ Please rewrite the story summary to perfectly reflect the user's instructions.
 Return ONLY the newly written paragraph. Do not include any explanations, preambles, or markdown formatting. Keep the tone cinematic, emotional, and highly engaging.
 """
     return call_openrouter_text(prompt, model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", fallbacks=["openai/gpt-oss-120b:free"], temperature=0.7)
+
+def regenerate_story_summary(current_summary: str) -> str:
+    prompt = f"""You are an elite creative writer and travel video editor.
+Here is a story summary that was previously generated for a travel reel:
+\"\"\"
+{current_summary}
+\"\"\"
+
+Please discard the current story summary entirely and write a completely NEW, fresh, and different story using the same underlying events and locations mentioned in the previous summary, but taking a totally different creative angle or narrative approach.
+
+Return ONLY the newly written paragraph. Do not include any explanations, preambles, or markdown formatting. Keep the tone cinematic, emotional, and highly engaging.
+"""
+    return call_openrouter_text(prompt, model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", fallbacks=["openai/gpt-oss-120b:free"], temperature=0.8)

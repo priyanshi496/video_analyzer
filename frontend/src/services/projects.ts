@@ -74,6 +74,11 @@ export const projectService = {
     return response.data;
   },
 
+  async regenerateStory(jobId: string) {
+    const response = await api.post(`/jobs/${jobId}/regenerate-story`, {});
+    return response.data;
+  },
+
   async deleteProject(id: string) {
     const response = await api.delete(`/projects/${id}`);
     return response.data;

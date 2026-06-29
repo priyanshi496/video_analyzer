@@ -13,6 +13,7 @@ import {
   Film,
   X,
   Maximize2,
+  RefreshCw,
 } from 'lucide-react';
 import { useWorkspace } from '../../hooks/useWorkspace';
 import { vibeOptions, musicModeOptions } from '../../lib/utils';
@@ -137,6 +138,7 @@ export function Workspace() {
     deleteAsset,
     startGeneration,
     confirmStory,
+    regenerateStory,
     resetJob,
     renameProject,
   } = useWorkspace(projectId || '');
@@ -157,6 +159,7 @@ export function Workspace() {
   const [rewriteInstruction, setRewriteInstruction] = useState('');
   const [editingStory, setEditingStory] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [isRegenerating, setIsRegenerating] = useState(false);
   const [inputText, setInputText] = useState('');
   const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null);
 
@@ -282,6 +285,17 @@ export function Workspace() {
       setChatPhase('story');
     } finally {
       setConfirming(false);
+    }
+  };
+
+  const handleRegenerateStory = async () => {
+    setIsRegenerating(true);
+    try {
+      await regenerateStory();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsRegenerating(false);
     }
   };
 
@@ -516,7 +530,9 @@ export function Workspace() {
                     if (!editingStory) setTimeout(() => storyTextareaRef.current?.focus(), 50);
                   }}
                   onGenerate={handleConfirmStory}
+                  onRegenerate={handleRegenerateStory}
                   confirming={confirming}
+                  isRegenerating={isRegenerating}
                   readOnly={chatPhase !== 'story'}
                 />
               )}
@@ -858,7 +874,9 @@ function StoryCard({
   textareaRef,
   onEditToggle,
   onGenerate,
+  onRegenerate,
   confirming,
+  isRegenerating,
   readOnly,
 }: {
   story: string;
@@ -868,13 +886,20 @@ function StoryCard({
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   onEditToggle: () => void;
   onGenerate: () => void;
+  onRegenerate: () => void;
   confirming: boolean;
+  isRegenerating: boolean;
   readOnly?: boolean;
 }) {
   return (
     <div className="animate-slide-up space-y-3 flex flex-col items-start w-full">
       <div className="bg-white rounded-2xl rounded-tl-sm shadow-sm overflow-hidden max-w-[92%] border border-surface-200/60">
-        <div className="p-4">
+        <div className="p-4 relative">
+          {isRegenerating && (
+            <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center z-10">
+              <div className="w-5 h-5 border-2 border-orange-200 border-t-orange-500 rounded-full animate-spin" />
+            </div>
+          )}
           <p className="text-sm text-surface-800 leading-relaxed">{story}</p>
 
           {editing && !readOnly && (
@@ -891,13 +916,25 @@ function StoryCard({
           )}
 
           {!editing && !readOnly && (
-            <button
-              onClick={onEditToggle}
-              className="flex items-center gap-1.5 mt-3 text-xs text-orange-500 hover:text-orange-600 transition-colors font-medium"
-            >
-              <Pencil className="w-3 h-3" />
-              Ask AI to change story
-            </button>
+            <div className="flex items-center gap-4 mt-3">
+              <button
+                onClick={onEditToggle}
+                disabled={isRegenerating}
+                className="flex items-center gap-1.5 text-xs text-orange-500 hover:text-orange-600 transition-colors font-medium disabled:opacity-50"
+              >
+                <Pencil className="w-3 h-3" />
+                Ask AI to change story
+              </button>
+              
+              <button
+                onClick={onRegenerate}
+                disabled={isRegenerating}
+                className="flex items-center gap-1.5 text-xs text-surface-500 hover:text-surface-700 transition-colors font-medium disabled:opacity-50"
+              >
+                <RefreshCw className="w-3 h-3" />
+                Regenerate description
+              </button>
+            </div>
           )}
         </div>
 

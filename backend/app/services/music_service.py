@@ -196,76 +196,54 @@ def pick_ai_music(vibe: str, final_segs: list, tmpdir: str) -> str:
     
     full_text = " ".join(segment_text)
     
-    # Analyze text for energy indicators
-    energy_up = ["fast", "active", "energetic", "run", "jump", "dance", "happy", "party", "celebrate", "excited", "upbeat"]
-    energy_down = ["slow", "calm", "peaceful", "quiet", "serene", "sad", "emotional", "relax", "meditative", "sleep"]
+    logger.info(f"AI Music Selection: vibe={vibe}, delegating directly to LLM evaluation...")
+    from app.services.llm_service import call_openrouter_text
     
-    energy_adj = 0
-    for word in energy_up:
-        energy_adj += full_text.count(word)
-    for word in energy_down:
-        energy_adj -= full_text.count(word)
-        
-    scaled_adj = max(-2, min(2, energy_adj // 3)) if energy_adj != 0 else 0
-    target_energy = max(1, min(10, vibe_target_energy + scaled_adj))
-    
-    logger.info(f"AI Music Selection: vibe={vibe}, vibe_target_energy={vibe_target_energy}, text_adj={scaled_adj}, final_target_energy={target_energy}")
-    
-    scored_songs = []
-    
+    # Build catalog summary for LLM
+    catalog_summary = []
     for song in catalog:
-        score = 0
+        catalog_summary.append({
+            "slug": song.get("slug"),
+            "artist": song.get("artist"),
+            "track": song.get("track"),
+            "mood": song.get("mood"),
+            "energy": song.get("energy"),
+            "keywords": song.get("keywords", [])
+        })
         
-        # Primary vibe matching
-        if vibe.lower() in [vt.lower() for vt in song.get("vibe_tags", [])]:
-            score += 15
+    prompt = (
+        f"You are a music supervisor. Based on the following video descriptions and mood flow, "
+        f"select the single best song from the provided catalog.\n\n"
+        f"Vibe requested: {vibe}\n"
+        f"Video Summary:\n{full_text}\n\n"
+        f"Catalog options:\n{json.dumps(catalog_summary, indent=2)}\n\n"
+        f"Rules:\n"
+        f"1. Choose the song that is culturally and semantically most appropriate for the video summary.\n"
+        f"2. Ensure the energy and mood of the song match the requested vibe and video context.\n"
+        f"3. Return ONLY the string value of the 'slug'.\n"
+        f"4. If absolutely NONE of the songs fit the context, return ONLY the word 'NOT_FOUND'.\n"
+    )
+    
+    try:
+        text_model = "openrouter/owl-alpha"
+        fallbacks = ["openai/gpt-oss-120b:free"]
+        res = call_openrouter_text(prompt, model=text_model, fallbacks=fallbacks)
+        slug_res = res.strip().strip('"').strip("'")
+        if slug_res == "NOT_FOUND":
+            logger.info("LLM determined no songs match the context. Returning empty.")
+            return ""
             
-        # Energy closeness
-        energy_diff = abs(song.get("energy", 5) - target_energy)
-        score += (10 - energy_diff)
-        
-        # Mood word alignment
-        song_mood = song.get("mood", "").lower()
-        if song_mood == "romantic" and any(w in full_text for w in ["love", "couple", "romantic", "romance", "together"]):
-            score += 5
-        elif song_mood == "happy" and any(w in full_text for w in ["happy", "joy", "smile", "laugh", "cheerful"]):
-            score += 5
-        elif song_mood == "sad" and any(w in full_text for w in ["sad", "emotional", "cry", "poignant", "sorrow"]):
-            score += 5
-        elif song_mood == "devotional" and any(w in full_text for w in ["god", "temple", "prayer", "spiritual", "devotional", "holy"]):
-            score += 5
-        elif song_mood == "motivational" and any(w in full_text for w in ["motivational", "power", "win", "run", "workout"]):
-            score += 5
-        elif song_mood == "chill" and any(w in full_text for w in ["chill", "relax", "calm", "slow", "peaceful"]):
-            score += 5
-
-        # Direct exact keyword matching (SUPER BOOST)
-        # If the story explicitly mentions a specific entity (like "Hanuman", "Garba"), boost the specific song heavily.
-        for kw in song.get("keywords", []):
-            if kw.lower() in full_text:
-                score += 50
-                break
-
-        scored_songs.append((score, song))
-            
-    if not scored_songs:
+        matched_song = next((s for s in catalog if s.get("slug") == slug_res), None)
+        if matched_song:
+            logger.info(f"LLM picked song: {matched_song['track']} by {matched_song['artist']} (slug: {slug_res})")
+            minio_key = f"music/catalog/{slug_res}.mp3"
+            return resolve_song_by_key(minio_key, matched_song["query"], tmpdir)
+        else:
+            logger.warning(f"LLM returned unknown slug: {slug_res}. Returning empty.")
+            return ""
+    except Exception as e:
+        logger.error(f"Failed LLM music selection: {e}")
         return ""
-        
-    import random
-    best_score = max(score for score, song in scored_songs)
-    
-    # Collect all songs that are tied for the top score, or within 1 point to add variety
-    top_contenders = [song for score, song in scored_songs if score >= best_score - 1]
-    
-    best_song = random.choice(top_contenders)
-            
-    if best_song:
-        logger.info(f"AI picked song: {best_song['track']} by {best_song['artist']} with score {best_score} (slug: {best_song['slug']})")
-        slug = best_song["slug"]
-        minio_key = f"music/catalog/{slug}.mp3"
-        return resolve_song_by_key(minio_key, best_song["query"], tmpdir)
-    
-    return ""
 
 def get_video_duration(video_path: str) -> float:
     """Uses ffprobe to find the duration of a video file."""

@@ -1545,8 +1545,8 @@ def run_full_analysis(
     story_transitions = []
     story_transition_durations = []
 
-    # Bypassed LLM story ordering call to guarantee 100% accurate location grouping and speed up pipeline by 45s
-    if False:
+    # Run LLM story ordering unless the user explicitly requested uploaded order
+    if not use_uploaded_order:
         
         # Determine landscape vs portrait for each clip to help the LLM prioritize vertical clips
         for seg in survived:
@@ -1748,6 +1748,74 @@ def run_full_analysis(
                 new_order.append(idx)
 
         return new_order
+
+    # ── Tag each clip with is_landscape using ffprobe (rotation-aware) ──────────
+    # OpenCV ignores rotation metadata embedded by smartphones, so it would
+    # report a landscape video saved as portrait (with rotation=90) as portrait.
+    # ffprobe reads the actual display dimensions correctly.
+    def get_effective_dimensions(video_path: str):
+        """Use ffprobe to get the display width/height (respecting rotation tag)."""
+        import json as _json
+        try:
+            cmd = [
+                "ffprobe", "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height,codec_tag_string:stream_tags=rotate:stream_side_data_list",
+                "-of", "json",
+                str(video_path)
+            ]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+            data = _json.loads(res.stdout)
+            stream = data.get("streams", [{}])[0]
+            w = stream.get("width", 0)
+            h = stream.get("height", 0)
+
+            # Check rotation tag: 90 or 270 means width/height are swapped visually
+            rotation = 0
+            tags = stream.get("tags", {})
+            if "rotate" in tags:
+                rotation = abs(int(tags["rotate"]))
+            # Also check side_data_list for modern rotation info
+            for sd in stream.get("side_data_list", []):
+                if "rotation" in sd:
+                    rotation = abs(int(sd["rotation"]))
+                    break
+
+            if rotation in (90, 270):
+                # Physically swapped — the displayed width and height are inverted
+                return h, w
+            return w, h
+        except Exception:
+            return 0, 0
+
+    for seg in survived:
+        try:
+            is_img = seg.get("is_image", False) or Path(seg["video_path"]).suffix.lower() in (".jpg", ".jpeg", ".png", ".heic")
+            if is_img:
+                import cv2 as _cv2
+                frame = _cv2.imread(str(seg["video_path"]))
+                if frame is not None:
+                    eff_h, eff_w = frame.shape[:2]
+                else:
+                    eff_w, eff_h = 1080, 1920
+            else:
+                eff_w, eff_h = get_effective_dimensions(seg["video_path"])
+                if eff_w == 0:  # ffprobe failed — fall back to OpenCV
+                    import cv2 as _cv2
+                    cap = _cv2.VideoCapture(str(seg["video_path"]))
+                    eff_w = int(cap.get(_cv2.CAP_PROP_FRAME_WIDTH))
+                    eff_h = int(cap.get(_cv2.CAP_PROP_FRAME_HEIGHT))
+                    cap.release()
+
+            aspect = eff_w / eff_h if eff_h else 1.0
+            seg["is_landscape"] = aspect > 1.0
+            logging.info(
+                f"  📐 [landscape_tag] {Path(seg['video_path']).name}: "
+                f"effective={eff_w}x{eff_h} → is_landscape={seg['is_landscape']}"
+            )
+        except Exception as _e:
+            seg["is_landscape"] = False
+            logging.warning(f"  ⚠️  [landscape_tag] Failed to detect aspect for {seg.get('video_path')}: {_e}")
 
     # Only enforce grids when the LLM ran (not when using uploaded order)
     if not use_uploaded_order and len(survived) >= 2:

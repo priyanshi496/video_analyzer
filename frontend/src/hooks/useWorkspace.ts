@@ -98,12 +98,13 @@ export function useWorkspace(projectId: string) {
     }
   };
 
-  const confirmStory = async (storySummary: string, rewriteInstructions?: string) => {
+  const confirmStory = async (storySummary: string, rewriteInstructions?: string, regenerate: boolean = false) => {
     if (!job?.id) return;
     try {
       const payload = {
         story_summary: storySummary,
         rewrite_instructions: rewriteInstructions,
+        regenerate: regenerate,
         asset_order: job.proposed_asset_order,
         asset_phases: job.asset_phases
       };
@@ -113,6 +114,19 @@ export function useWorkspace(projectId: string) {
     } catch (err: any) {
       console.error(err);
       alert(`Failed to confirm story: ${err.message}`);
+      throw err;
+    }
+  };
+
+  const regenerateStory = async () => {
+    if (!job?.id) return;
+    try {
+      const updatedJob = await projectService.regenerateStory(job.id);
+      setJob(updatedJob);
+      return updatedJob;
+    } catch (err: any) {
+      console.error(err);
+      alert(`Failed to regenerate story: ${err.message}`);
       throw err;
     }
   };
@@ -145,6 +159,7 @@ export function useWorkspace(projectId: string) {
     deleteAsset,
     startGeneration,
     confirmStory,
+    regenerateStory,
     resetJob,
     renameProject,
   };
