@@ -45,9 +45,9 @@ export function Dashboard() {
       const name = `Project ${projects.length + 1}`;
       const project = await projectService.createProject(name);
       navigate(`/project/${project.id}`);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Failed to create project');
+      alert(err.userMessage || 'Failed to create project. Please try again.');
     } finally {
       setCreating(false);
     }
@@ -58,9 +58,9 @@ export function Dashboard() {
     try {
       await projectService.deleteProject(projectToDelete);
       setProjects(prev => prev.filter(p => p.id !== projectToDelete));
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Failed to delete project');
+      alert(err.userMessage || 'Failed to delete project. Please try again.');
     } finally {
       setProjectToDelete(null);
     }

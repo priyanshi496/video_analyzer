@@ -134,6 +134,7 @@ export function Workspace() {
     jobHistory,
     loading,
     uploading,
+    workspaceError,
     uploadFile,
     deleteAsset,
     startGeneration,
@@ -326,6 +327,13 @@ export function Workspace() {
         onChange={handleFileSelect}
       />
 
+      {/* Error Toast */}
+      {workspaceError && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-2.5 shadow-md animate-slide-up">
+          <span className="flex-1">{workspaceError}</span>
+        </div>
+      )}
+
       {/* Top bar */}
       <div className="flex items-center justify-between px-5 py-3.5 bg-transparent">
         <button
@@ -453,7 +461,7 @@ export function Workspace() {
                 assets={mediaAssets}
                 onDelete={deleteAsset}
                 onAddMore={() => fileInputRef.current?.click()}
-                locked={['processing', 'rendering', 'complete', 'failed'].includes(chatPhase)}
+                locked={['song_query', 'processing', 'story', 'rendering', 'complete', 'failed'].includes(chatPhase)}
                 uploading={uploading}
               />
 
@@ -1058,7 +1066,7 @@ function ChatInputBar({
     return 'Message...';
   };
 
-  const isDisabled = ['processing', 'rendering', 'complete', 'failed'].includes(phase);
+  const isDisabled = ['song_query', 'processing', 'rendering', 'complete', 'failed'].includes(phase);
 
   return (
     <div className="px-4 pb-4 pt-2 flex items-center gap-2.5 border-t border-surface-200/50 bg-transparent">

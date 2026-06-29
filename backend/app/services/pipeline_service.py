@@ -2230,13 +2230,15 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                 if music_config and music_config.get("mode") != "none":
                     logging.info(f"  🎵 [Pipeline] Running music selection flow. Mode: {music_config.get('mode')}")
                     from app.services.music_service import resolve_custom_music, pick_ai_music, mix_music_into_video, resolve_suno_music
+                    from app.services.spotify_service import get_spotify_hookline_start
                     import os
                     
                     music_path = None
+                    song_title = ""
                     if music_config.get("mode") == "custom" and music_config.get("custom_query"):
-                        music_path = resolve_custom_music(music_config["custom_query"], tmpdir)
+                        music_path, song_title = resolve_custom_music(music_config["custom_query"], tmpdir)
                     elif music_config.get("mode") == "ai":
-                        music_path = pick_ai_music(vibe, final_segs, tmpdir)
+                        music_path, song_title = pick_ai_music(vibe, final_segs, tmpdir)
                     elif music_config.get("mode") == "suno":
                         music_path = resolve_suno_music(
                             vibe=vibe,
@@ -2246,14 +2248,16 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                         )
                         if not music_path:
                             logging.warning("Suno AI failed (likely 429 Insufficient Credits). Falling back to royalty-free 'ai' music.")
-                            music_path = pick_ai_music(vibe, final_segs, tmpdir)
+                            music_path, song_title = pick_ai_music(vibe, final_segs, tmpdir)
 
                         
                     if music_path and os.path.exists(music_path):
-                        logging.info(f"  🎵 [Pipeline] Music resolved to local path: {music_path}. Mixing...")
+                        # Detect hookline start via Spotify (falls back to 0.0 safely if unavailable)
+                        hook_start = get_spotify_hookline_start(song_title) if song_title else 0.0
+                        logging.info(f"  🎵 [Pipeline] Music resolved to local path: {music_path}. Hookline start: {hook_start:.1f}s. Mixing...")
                         mixed_reel_path = Path(tmpdir) / "final_video_mixed.mp4"
                         try:
-                            mix_music_into_video(str(reel_path), music_path, str(mixed_reel_path))
+                            mix_music_into_video(str(reel_path), music_path, str(mixed_reel_path), audio_start=hook_start)
                             if mixed_reel_path.exists():
                                 reel_path = mixed_reel_path
                                 logging.info("  🎵 [Pipeline] Music successfully mixed into reel video.")
@@ -2499,12 +2503,14 @@ def continue_video_analysis(self, job_id: str, confirmed_order: list, confirmed_
                 if music_config and music_config.get("mode") != "none":
                     logging.info(f"  🎵 [Pipeline Phase 2] Running music selection flow. Mode: {music_config.get('mode')}")
                     from app.services.music_service import resolve_custom_music, pick_ai_music, mix_music_into_video, resolve_suno_music
+                    from app.services.spotify_service import get_spotify_hookline_start
                     
                     music_path = None
+                    song_title = ""
                     if music_config.get("mode") == "custom" and music_config.get("custom_query"):
-                        music_path = resolve_custom_music(music_config["custom_query"], tmpdir)
+                        music_path, song_title = resolve_custom_music(music_config["custom_query"], tmpdir)
                     elif music_config.get("mode") == "ai":
-                        music_path = pick_ai_music(vibe, final_segs, tmpdir)
+                        music_path, song_title = pick_ai_music(vibe, final_segs, tmpdir)
                     elif music_config.get("mode") == "suno":
                         music_path = resolve_suno_music(
                             vibe=vibe,
@@ -2514,13 +2520,15 @@ def continue_video_analysis(self, job_id: str, confirmed_order: list, confirmed_
                         )
                         if not music_path:
                             logging.warning("Suno AI failed (likely 429 Insufficient Credits). Falling back to royalty-free 'ai' music.")
-                            music_path = pick_ai_music(vibe, final_segs, tmpdir)
+                            music_path, song_title = pick_ai_music(vibe, final_segs, tmpdir)
                         
                     if music_path and os.path.exists(music_path):
-                        logging.info(f"  🎵 [Pipeline Phase 2] Music resolved to local path: {music_path}. Mixing...")
+                        # Detect hookline start via Spotify (falls back to 0.0 safely if unavailable)
+                        hook_start = get_spotify_hookline_start(song_title) if song_title else 0.0
+                        logging.info(f"  🎵 [Pipeline Phase 2] Music resolved to local path: {music_path}. Hookline start: {hook_start:.1f}s. Mixing...")
                         mixed_reel_path = Path(tmpdir) / "final_video_mixed.mp4"
                         try:
-                            mix_music_into_video(str(reel_path), music_path, str(mixed_reel_path))
+                            mix_music_into_video(str(reel_path), music_path, str(mixed_reel_path), audio_start=hook_start)
                             if mixed_reel_path.exists():
                                 reel_path = mixed_reel_path
                                 logging.info("  🎵 [Pipeline Phase 2] Music successfully mixed.")
