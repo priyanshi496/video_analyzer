@@ -91,23 +91,16 @@ class PodcastService:
                 transcript_result["words"]
             )
             
-            # Step 5: Calculate zoom effects
-            logger.info("Step 5: Calculating zoom effects...")
-            zoom_effects = await self.zoom_effects_service.calculate_zoom_keyframes(
+            # Step 5: Apply keyword highlights to captions for important moments
+            logger.info("Step 5: Applying keyword highlights to captions...")
+            caption_segments = self.caption_service.apply_keyword_highlights(
+                caption_segments,
                 important_moments,
-                options.zoom_intensity
+                highlight_color="#FFD60A"  # Yellow highlight for emphasis
             )
-
-            # Validate keyframes before rendering — catch bad data early
-            issues = self.zoom_effects_service.validate_zoom_keyframes(zoom_effects)
-            if issues:
-                logger.warning(f"Zoom keyframe issues detected: {issues}")
-                # Drop keyframes that would crash FFmpeg, keep the rest
-                zoom_effects = [
-                    kf for kf in zoom_effects
-                    if kf.get("end_time", 0) > kf.get("start_time", 0)
-                    and 0.5 <= kf.get("zoom_start", 1.0) <= 3.0
-                ]
+            
+            # Zoom effects disabled - keeping only keyword highlighting
+            zoom_effects = []
             
             # Step 6: Render final video with captions + zoom
             logger.info("Step 6: Rendering final video...")
@@ -193,17 +186,8 @@ class PodcastService:
             caption_segments, options
         )
 
-        # Zoom filter using zoompan with frame-number keying (confirmed working on FFmpeg 8.x)
-        hold_kfs = [kf for kf in zoom_effects if kf.get("transition_type") == "hold"]
-        zoom_filter = self._build_zoom_filter(hold_kfs, options.zoom_intensity, w, h, fps)
-
-        # Assemble vf chain
-        vf_parts = []
-        if zoom_filter:
-            vf_parts.append(zoom_filter)
-        if caption_filter:
-            vf_parts.append(caption_filter)
-        vf = ",".join(vf_parts) if vf_parts else None
+        # Zoom disabled - no zoom filter applied
+        vf = caption_filter if caption_filter else None
 
         cmd = ["ffmpeg", "-y", "-i", video_path]
         if vf:
@@ -217,7 +201,7 @@ class PodcastService:
             output_path,
         ]
 
-        logger.info(f"FFmpeg render: {len(hold_kfs)} zoom windows, {len(caption_segments)} captions, {w}x{h}@{fps}")
+        logger.info(f"FFmpeg render: {len(caption_segments)} captions (zoom disabled), {w}x{h}@{fps}")
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -263,55 +247,112 @@ class PodcastService:
         video_w: int, video_h: int, fps: int
     ) -> str:
         """
-        zoompan-based zoom keyed on 'on' (output frame number).
+        Precomputed per-frame zoom — NOT a live zoompan math expression.
 
-        Anti-jitter fix: x/y wrapped in trunc() to force whole-pixel
-        positions, removing sub-pixel rounding shake between frames.
+        WHY: zoompan recomputes crop window from a string expression every
+        frame. Even with trunc()/eased ramps, this produces visible
+        jitter on real video (confirmed via testing — multiple ease
+        durations, trunc() pixel snapping, and 2x-fps smoothing all
+        tried, jitter persisted or caused stalls).
 
-        NOTE: an earlier version tried rendering zoompan at 2x internal
-        fps then downsampling — this caused a buffer backlog/stall on
-        real video (confirmed via FFmpeg "buffers queued" warning and
-        render hang). Do NOT reintroduce that approach. Single-pass at
-        native fps with trunc() is the stable, tested fix.
+        APPROACH (inspired by CapCut's own keyframe model — two values,
+        time range, engine interpolates): we compute the EXACT zoom
+        level for every single output frame in Python using a proper
+        cubic ease-in-out curve, then bake those values into the
+        zoompan expression as a discrete lookup via nested if/between
+        on a PER-FRAME basis rather than a continuous formula. This
+        removes floating point expression evaluation jitter because
+        every frame's zoom value is a fixed, pre-rounded constant
+        instead of a live computed fraction.
 
-        Subtle zoom range (1.15x - 1.3x), eased ramp in/hold/out.
+        For long videos this can produce a long filter string (one
+        if-branch per ease frame) — acceptable for podcast clips up to
+        a few minutes. If filter strings get unwieldy on very long
+        videos, switch to the file-based per-frame crop list approach
+        instead (see _build_zoom_filter_v2_lut below, not yet wired in).
         """
         if not hold_kfs:
             return ""
 
         MIN_ZOOM = 1.15
         MAX_ZOOM = 1.3
-        ease_seconds = 1.1
+        ease_seconds = 0.8  # Shorter ease = fewer frames = simpler expression
         ease_frames = max(1, int(ease_seconds * fps))
 
-        zoom_expr = "1.0"
-        for kf in reversed(hold_kfs):
+        def ease_in_out_cubic(t: float) -> float:
+            """Smooth cubic ease — t in [0,1], returns eased [0,1]."""
+            if t < 0.5:
+                return 4 * t * t * t
+            p = 2 * t - 2
+            return 1 + p * p * p / 2
+
+        # Build a frame -> zoom_value lookup table for every frame that
+        # needs a non-default (non-1.0) zoom value.
+        frame_zoom: Dict[int, float] = {}
+
+        for kf in hold_kfs:
             s_fr = max(0, int(kf["start_time"] * fps))
             e_fr = int(kf["end_time"] * fps)
-            z = round(min(max(max(kf["zoom_start"], kf["zoom_end"]), MIN_ZOOM), MAX_ZOOM), 2)
+            z = round(min(max(max(kf["zoom_start"], kf["zoom_end"]), MIN_ZOOM), MAX_ZOOM), 3)
 
             half_window = max(1, (e_fr - s_fr) // 2)
             ef = min(ease_frames, half_window)
 
-            ease_in_end     = s_fr + ef
-            ease_out_start  = e_fr - ef
+            ease_in_end    = s_fr + ef
+            ease_out_start = e_fr - ef
 
-            this_zoom = (
-                f"if(between(on,{s_fr},{ease_in_end}),"
-                    f"1.0+({z}-1.0)*(on-{s_fr})/{ef},"
-                f"if(between(on,{ease_in_end},{ease_out_start}),"
-                    f"{z},"
-                f"if(between(on,{ease_out_start},{e_fr}),"
-                    f"{z}-({z}-1.0)*(on-{ease_out_start})/{ef},"
-                f"{zoom_expr})))"
-            )
-            zoom_expr = this_zoom
+            # Ramp up: frames [s_fr, ease_in_end)
+            for i, frame in enumerate(range(s_fr, ease_in_end)):
+                t = i / max(1, ef)
+                eased_t = ease_in_out_cubic(t)
+                frame_zoom[frame] = round(1.0 + (z - 1.0) * eased_t, 3)
+
+            # Hold: frames [ease_in_end, ease_out_start)
+            for frame in range(ease_in_end, ease_out_start):
+                frame_zoom[frame] = z
+
+            # Ramp down: frames [ease_out_start, e_fr]
+            for i, frame in enumerate(range(ease_out_start, e_fr + 1)):
+                t = i / max(1, ef)
+                eased_t = ease_in_out_cubic(t)
+                frame_zoom[frame] = round(z - (z - 1.0) * eased_t, 3)
+
+        if not frame_zoom:
+            return ""
+
+        # Collapse consecutive identical values into ranges to keep the
+        # filter string manageable (huge win: cubic easing means many
+        # adjacent frames round to the same 3-decimal value).
+        sorted_frames = sorted(frame_zoom.keys())
+        ranges: List[Tuple[int, int, float]] = []  # (start_frame, end_frame, value)
+        range_start = sorted_frames[0]
+        range_val   = frame_zoom[range_start]
+        prev_frame  = range_start
+
+        for frame in sorted_frames[1:]:
+            val = frame_zoom[frame]
+            if frame == prev_frame + 1 and val == range_val:
+                prev_frame = frame
+                continue
+            ranges.append((range_start, prev_frame, range_val))
+            range_start = frame
+            range_val   = val
+            prev_frame  = frame
+        ranges.append((range_start, prev_frame, range_val))
 
         logger.info(
-            f"Eased zoom built ({len(hold_kfs)} windows, "
-            f"{ease_frames}f ease @ {fps}fps native, "
-            f"min={MIN_ZOOM} max={MAX_ZOOM})"
+            f"Precomputed zoom: {len(hold_kfs)} windows -> "
+            f"{len(frame_zoom)} raw frames collapsed to {len(ranges)} ranges "
+            f"(ease={ease_seconds}s cubic, min={MIN_ZOOM} max={MAX_ZOOM})"
         )
+
+        # Build nested if/between expression from the collapsed ranges.
+        # Each range is now a FIXED constant value, not a live formula —
+        # this is the key difference from the old approach, which
+        # recomputed (on-s_fr)/ef as a live division every frame.
+        zoom_expr = "1.0"
+        for s_fr, e_fr, val in reversed(ranges):
+            zoom_expr = f"if(between(on,{s_fr},{e_fr}),{val},{zoom_expr})"
 
         return (
             f"zoompan=z='{zoom_expr}'"

@@ -35,7 +35,9 @@ class MomentDetectionService:
             base_url="https://integrate.api.nvidia.com/v1",
             api_key=settings.NVIDIA_API_KEY,
         )
-        self.model = "openai/gpt-oss-120b"
+        # Use llama-3.1-nemotron-70b-instruct instead of gpt-oss-120b
+        # Nemotron is optimized for instruction-following and structured output
+        self.model = "nvidia/llama-3.1-nemotron-70b-instruct"
 
     async def find_key_moments(
         self, 
@@ -84,13 +86,18 @@ class MomentDetectionService:
             response_text = await loop.run_in_executor(
                 None, self._call_nvidia, prompt
             )
+            logger.info(f"[LLM Raw Response Length] {len(response_text)} chars")
+            logger.info(f"[LLM Raw Response] {response_text}")  # Log full response
+            
             segments = self._parse_llm_response(response_text)
             if segments:
-                logger.info(f"NVIDIA LLM found {len(segments)} important moments")
+                logger.info(f"NVIDIA LLM found {len(segments)} important moments:")
+                for i, seg in enumerate(segments, 1):
+                    logger.info(f"  Moment {i}: text={seg.get('text', '')[:60]}... reason={seg.get('reason')} intensity={seg.get('intensity')}")
                 return segments
-            logger.warning("NVIDIA LLM returned no parseable segments")
+            logger.warning("NVIDIA LLM returned no parseable segments - check raw response above")
         except Exception as e:
-            logger.warning(f"NVIDIA LLM moment detection failed: {e}")
+            logger.error(f"NVIDIA LLM moment detection failed: {e}", exc_info=True)
 
         return []
 
@@ -113,55 +120,63 @@ class MomentDetectionService:
         return content if content and content.strip() else (reasoning or "")
 
     def _build_analysis_prompt(self, transcript_text: str) -> str:
-        return f"""You are a video editor. Analyze this podcast transcript and find the 2-3 MOST engaging moments that deserve a zoom-in effect.
-
-IMPORTANT: Be very selective. Choose only the absolute BEST moments. Quality over quantity.
-
-Look for:
-- Strong opinions or controversial statements
-- Key insights or revelations  
-- Statistics or impressive numbers
-- Emotional peaks (excitement, frustration, passion)
-- Definitive conclusions or call-to-actions
+        return f"""Find 4 powerful moments from this speech. Return ONLY the JSON array, nothing else.
 
 TRANSCRIPT:
 {transcript_text}
 
-CRITICAL JSON FORMATTING RULES:
-- Return ONLY a valid JSON array. No markdown, no backticks, no explanation.
-- The "text" field must NOT contain any double-quote characters. If the quote naturally has quotes, paraphrase it instead of quoting verbatim.
-- Keep each "text" value under 15 words.
-- Do not use apostrophes with special characters — use plain ASCII only.
-
-Example format:
+JSON format (return ONLY this, no explanation):
 [
-  {{"text": "exact quote from transcript", "reason": "key_insight", "intensity": "high", "keywords": ["word1", "word2"]}},
-  {{"text": "another quote", "reason": "statistics", "intensity": "medium", "keywords": ["word1"]}}
-]
-
-Valid reason values: key_insight, statistics, strong_opinion, emotional_peak, conclusion, call_to_action
-Valid intensity values: low, medium, high
-
-JSON array only:"""
+  {{"text": "exact quote 8-15 words", "reason": "key_insight", "intensity": "high", "keywords": ["word1", "word2"]}},
+  {{"text": "another quote 8-15 words", "reason": "strong_opinion", "intensity": "high", "keywords": ["word1"]}}
+]"""
 
     def _parse_llm_response(self, response_text: str) -> List[Dict]:
         """Parse LLM response — tries multiple strategies to extract valid JSON."""
         if not response_text:
+            logger.warning("Empty LLM response")
             return []
 
-        # Strategy 1: clean JSON array block
-        for pattern in [r'\[\s*\{.*?\}\s*\]', r'\[.*?\]']:
+        # Strategy 0: Look for the LAST JSON array in the response (reasoning models put JSON at the end)
+        all_arrays = re.findall(r'\[(?:[^[\]]|\[[^\]]*\])*\]', response_text, re.DOTALL)
+        if all_arrays:
+            # Try from last to first (reasoning models typically put answer at end)
+            for array_str in reversed(all_arrays):
+                try:
+                    parsed = json.loads(array_str)
+                    if isinstance(parsed, list) and parsed:
+                        valid = [s for s in parsed if isinstance(s, dict) and "text" in s and "reason" in s]
+                        if valid:
+                            logger.info(f"Strategy 0 (last array) succeeded: {len(valid)} segments")
+                            return self._normalize_segments(valid)
+                except json.JSONDecodeError:
+                    continue
+
+        # Strategy 1: Try direct JSON parse (cleanest case)
+        try:
+            parsed = json.loads(response_text.strip())
+            if isinstance(parsed, list):
+                valid = [s for s in parsed if "text" in s and "reason" in s]
+                if valid:
+                    logger.info(f"Strategy 1 (direct parse) succeeded: {len(valid)} segments")
+                    return self._normalize_segments(valid)
+        except json.JSONDecodeError as e:
+            logger.debug(f"Strategy 1 failed: {e}")
+
+        # Strategy 2: Extract JSON array from markdown or surrounded text
+        for pattern in [r'```json\s*(\[.*?\])\s*```', r'```\s*(\[.*?\])\s*```', r'(\[\s*\{.*?\}\s*\])']:
             match = re.search(pattern, response_text, re.DOTALL)
             if match:
                 try:
-                    segments = json.loads(match.group())
-                    valid = [s for s in segments if "text" in s and "reason" in s]
+                    parsed = json.loads(match.group(1))
+                    valid = [s for s in parsed if "text" in s and "reason" in s]
                     if valid:
+                        logger.info(f"Strategy 2 (regex extract) succeeded: {len(valid)} segments")
                         return self._normalize_segments(valid)
                 except json.JSONDecodeError:
-                    pass
+                    continue
 
-        # Strategy 2: trailing comma / truncation fix
+        # Strategy 3: Clean up common JSON errors (trailing commas, truncation)
         try:
             cleaned = re.sub(r',\s*([}\]])', r'\1', response_text)
             cleaned = cleaned.strip()
@@ -170,24 +185,28 @@ JSON array only:"""
                 cleaned = cleaned.rstrip(',').rstrip() + ']'
             match = re.search(r'\[.*?\]', cleaned, re.DOTALL)
             if match:
-                segments = json.loads(match.group())
-                valid = [s for s in segments if "text" in s and "reason" in s]
+                parsed = json.loads(match.group())
+                valid = [s for s in parsed if "text" in s and "reason" in s]
                 if valid:
+                    logger.info(f"Strategy 3 (cleanup) succeeded: {len(valid)} segments")
                     return self._normalize_segments(valid)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Strategy 3 failed: {e}")
 
-        # Strategy 3: extract individual objects when array is malformed
+        # Strategy 4: Extract individual JSON objects
         try:
             objects = re.findall(r'\{[^{}]*\}', response_text, re.DOTALL)
             recovered = []
             for obj_str in objects:
                 try:
-                    recovered.append(json.loads(obj_str))
+                    obj = json.loads(obj_str)
+                    if "text" in obj and "reason" in obj:
+                        recovered.append(obj)
                     continue
                 except json.JSONDecodeError:
                     pass
-                text_m = re.search(r'"text"\s*:\s*"(.*?)"\s*,\s*"reason"', obj_str, re.DOTALL)
+                # Manual field extraction as last resort
+                text_m = re.search(r'"text"\s*:\s*"([^"]*)"', obj_str)
                 reason_m = re.search(r'"reason"\s*:\s*"([^"]*)"', obj_str)
                 intensity_m = re.search(r'"intensity"\s*:\s*"([^"]*)"', obj_str)
                 if text_m and reason_m:
@@ -200,11 +219,12 @@ JSON array only:"""
             if recovered:
                 valid = [s for s in recovered if "text" in s and "reason" in s]
                 if valid:
+                    logger.info(f"Strategy 4 (object recovery) succeeded: {len(valid)} segments")
                     return self._normalize_segments(valid)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Strategy 4 failed: {e}")
 
-        logger.warning("Failed to parse LLM JSON response after all strategies")
+        logger.error(f"Failed to parse LLM JSON response after all strategies. Response starts with: {response_text[:200]}")
         return []
 
     def _normalize_segments(self, valid: List[Dict]) -> List[Dict]:
@@ -338,19 +358,19 @@ JSON array only:"""
             if moment["end_time"] - moment["start_time"] < 1.5:
                 continue
             
-            # Extend short moments to minimum 2.5 seconds for smooth zoom
+            # Extend short moments to minimum 2.5 seconds for smooth display
             if moment["end_time"] - moment["start_time"] < 2.5:
                 center = (moment["start_time"] + moment["end_time"]) / 2
                 moment["start_time"] = max(0, center - 1.25)
                 moment["end_time"] = center + 1.25
             
-            # Skip if too close to previous moment (< 4 second gap for smoother separation)
+            # Skip if too close to previous moment (< 3 second gap)
             if optimized:
                 last_end = optimized[-1]["end_time"]
-                if moment["start_time"] - last_end < 4.0:
+                if moment["start_time"] - last_end < 3.0:
                     continue
             
             optimized.append(moment)
         
-        # Limit to max 3 moments per video for quality over quantity
-        return optimized[:3]
+        # Return up to 4 moments for better coverage (was 2)
+        return optimized[:4]
