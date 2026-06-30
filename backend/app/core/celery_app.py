@@ -11,7 +11,11 @@ celery_app = Celery(
     "video_analyzer",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["app.api.routes.jobs", "app.services.pipeline_service"] # Define modules where tasks are found
+    include=[
+        "app.api.routes.jobs", 
+        "app.services.pipeline_service",
+        "app.tasks.podcast_tasks"  # Add podcast tasks
+    ] # Define modules where tasks are found
 )
 
 celery_app.conf.update(
@@ -22,3 +26,6 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
 )
+
+# Export app for tasks to use
+app = celery_app
