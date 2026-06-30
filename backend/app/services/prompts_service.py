@@ -873,17 +873,17 @@ Each image is a thumbnail from a real trip or event video/photo.
 
 CRITICAL: EXIF METADATA PROVIDED.
 You are provided with real-world GPS Location and Time metadata for each image below. You MUST use this data to ground your descriptions.
-- If the location says "Sarangpur Hanuman", DO NOT hallucinate other deities like "Ganesha". It is Hanuman.
-- Use the provided location to confidently state the setting instead of guessing.
-- Use the provided time to confidently state the time_of_day instead of guessing from lighting.
+- The provided location is the GROUND TRUTH. Use it directly — do not guess, invent, or hallucinate a different location.
+- If the location metadata is "Unknown Location", describe only what you can visually observe in the image.
+- Use the provided time to state the time_of_day instead of guessing from lighting.
 
 IMAGES:
 {asset_list_str}
 
 For EACH image (in the order provided), output a short structured description covering:
-- setting: where is this? (e.g., car interior, highway, temple exterior, shrine interior, night architecture, giant statue plaza, pond, etc.)
-- subjects: who or what is the primary focus? (e.g., group of people in car, illuminated temple dome, golden Hanuman statue, deity idol, water lilies)
-- activity: what is happening? (e.g., driving, smiling at camera, walking toward statue, praying at shrine, sightseeing at night)
+- setting: where is this? (e.g., car interior, highway, temple exterior, shrine interior, night architecture, beach, mountain trail, etc.)
+- subjects: who or what is the primary focus?
+- activity: what is happening? (e.g., driving, smiling at camera, walking, sightseeing, swimming, eating)
 - time_of_day: day / golden_hour / night / unknown
 - emotional_tone: (e.g., relaxed, joyful, reverent, awe-struck, peaceful, excited)
 - trip_phase: one of: departure, travel, arrival, sightseeing, religious_visit, night_visit, group_moment, nature_detail, return
@@ -903,8 +903,7 @@ Output raw JSON only — no markdown, no code fences:
   ]
 }}
 
-CRITICAL: The array MUST have exactly {num_assets} entries, one per image in order (index 0 through {num_assets - 1}).
-"""
+CRITICAL: The array MUST have exactly {num_assets} entries, one per image in order."""
 
 
 def build_story_narrative_prompt(asset_descriptions: list, vibe: str, directives: str, num_assets: int) -> str:
@@ -958,14 +957,14 @@ STEP 3 — WRITE THE STORY NARRATIVE:
 Write a vivid, personal, first-person "story_summary" that reads like a heartfelt travel diary or Instagram caption.
 
 RULES FOR story_summary:
-- Start with a punchy TITLE sentence naming the destination/theme (e.g. "Seeing the King of Salangpur." / "A Golden Evening at Rishikesh." / "Our Drive to the Hills.")
+- Start with a punchy TITLE sentence naming the ACTUAL destination/theme derived from the visual descriptions above (e.g. a beach trip title, a mountain trip title, a temple visit title — based ONLY on what you read above, NOT on any built-in example).
 - Then write 3–5 narrative sentences IN STORY ORDER: describe what happened step by step — the journey, what was seen, highlights, how it felt.
-- Be SPECIFIC: mention the car ride, the people, the glowing architecture, the giant statue, the shrine interior, the mood, the lighting, etc. — all drawn from the visual descriptions above.
-- Write in first person ("We started our trip...", "The glowing temple...", "We left feeling...")
+- Be SPECIFIC: use the actual locations, people, and settings described in the visual analysis above.
+- Write in first person ("We started our trip...", "The view was...", "We left feeling...")
 - Make it emotional, vivid, and personal — NOT a generic tourism summary.
 
-GOOD EXAMPLE:
-"Seeing the King of Salangpur. We started our trip with a rainy drive and a golden sunset before reaching the temple. The glowing architecture at night and the massive Hanuman statue were absolutely stunning. We visited the Shree Kashtabhanjan Dev shrine and left feeling peaceful, happy, and full of gratitude."
+GOOD EXAMPLE STYLE (do NOT copy this example — write one based on the actual assets above):
+"Our trip title based on the actual destination. We began with [actual journey detail]. Along the way we saw [actual location highlights]. The highlight was [most impactful moment]. We left feeling [emotional close]."
 
 BAD EXAMPLE (unacceptable — do NOT produce this):
 "A family road trip to a spiritual destination." — Too short, too vague, impersonal.

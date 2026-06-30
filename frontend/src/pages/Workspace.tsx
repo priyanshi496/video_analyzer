@@ -13,6 +13,8 @@ import {
   MessageSquare,
   Volume2,
   RefreshCw,
+  Play,
+  Pause,
 } from 'lucide-react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useWorkspace } from '../hooks/useWorkspace';
@@ -160,6 +162,25 @@ export default function Workspace() {
   const [inputText, setInputText] = useState('');
   const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null);
   const [showEditorUrl, setShowEditorUrl] = useState<string | null>(null);
+  const [isFullscreenPlaying, setIsFullscreenPlaying] = useState(true);
+  const fullscreenVideoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (activePreviewUrl) {
+      setIsFullscreenPlaying(true);
+    }
+  }, [activePreviewUrl]);
+
+  const toggleFullscreenPlay = () => {
+    if (!fullscreenVideoRef.current) return;
+    if (isFullscreenPlaying) {
+      fullscreenVideoRef.current.pause();
+      setIsFullscreenPlaying(false);
+    } else {
+      fullscreenVideoRef.current.play().catch(() => {});
+      setIsFullscreenPlaying(true);
+    }
+  };
 
   // Templates Mode States
   const [activeMode, setActiveMode] = useState<'ai' | 'templates'>('ai');
@@ -649,80 +670,82 @@ export default function Workspace() {
         </>
       )}
 
-      {/* ── Full-screen Mobile Video Viewer (Reelful style) ── */}
+      {/* ── Theatre Mode Video Preview Overlay ── */}
       {activePreviewUrl && (
-        <div className="fixed inset-0 z-50 bg-black animate-fade-in flex items-center justify-center">
-          {/* Video fills screen */}
-          <video
-            src={activePreviewUrl}
-            autoPlay
-            controls={false}
-            loop
-            playsInline
-            className="absolute inset-0 w-full h-full object-contain"
-          />
-
-          {/* Top bar */}
-          <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 pt-10 pb-4 bg-gradient-to-b from-black/60 to-transparent z-10">
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md animate-fade-in flex items-center justify-center p-4">
+          <div className="relative flex flex-col md:flex-row items-center gap-6 max-h-[90vh]">
+            {/* Close Button */}
             <button
               onClick={() => setActivePreviewUrl(null)}
-              className="w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center cursor-pointer"
+              className="absolute -top-12 right-0 md:-top-10 md:-right-10 z-20 w-10 h-10 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center cursor-pointer transition-all active:scale-95"
             >
               <X className="w-5 h-5" />
             </button>
+
+            {/* Video Box */}
+            <div className="relative w-full max-w-sm aspect-[9/16] bg-slate-950 rounded-3xl overflow-hidden shadow-2xl border border-white/10 flex items-center justify-center">
+              <video
+                src={activePreviewUrl}
+                autoPlay
+                controls
+                playsInline
+                className="w-full h-full object-contain"
+              />
+            </div>
+
+            {/* Action buttons panel */}
+            <div className="flex flex-row md:flex-col items-center gap-4 bg-black/40 backdrop-blur-sm p-4 rounded-3xl border border-white/5 z-10">
+              {/* Save / Download */}
+              <button
+                onClick={() => triggerDownload(activePreviewUrl)}
+                className="flex flex-col items-center gap-1 text-white cursor-pointer hover:scale-105 transition-transform"
+              >
+                <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center">
+                  <Download className="w-4 h-4" />
+                </div>
+                <span className="text-[10px] font-medium opacity-80">Save</span>
+              </button>
+
+              {/* Caption */}
+              <button className="flex flex-col items-center gap-1 text-white cursor-pointer hover:scale-105 transition-transform">
+                <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center">
+                  <MessageSquare className="w-4 h-4" />
+                </div>
+                <span className="text-[10px] font-medium opacity-80">Caption</span>
+              </button>
+
+              {/* Edit / Scissors */}
+              <button
+                onClick={() => {
+                  const url = activePreviewUrl;
+                  setActivePreviewUrl(null);
+                  setShowEditorUrl(url);
+                }}
+                className="flex flex-col items-center gap-1 text-white cursor-pointer hover:scale-105 transition-transform"
+              >
+                <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center shadow-md">
+                  <Scissors className="w-4 h-4" />
+                </div>
+                <span className="text-[10px] font-medium opacity-80">Edit</span>
+              </button>
+
+              {/* Voice */}
+              <button className="flex flex-col items-center gap-1 text-white cursor-pointer hover:scale-105 transition-transform">
+                <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center">
+                  <Mic className="w-4 h-4" />
+                </div>
+                <span className="text-[10px] font-medium opacity-80">Voice</span>
+              </button>
+
+              {/* Music */}
+              <button className="flex flex-col items-center gap-1 text-white cursor-pointer hover:scale-105 transition-transform">
+                <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center">
+                  <Music className="w-4 h-4" />
+                </div>
+                <span className="text-[10px] font-medium opacity-80">Music</span>
+              </button>
+            </div>
           </div>
-
-          {/* Right side icons (reelful style) */}
-          <div className="absolute right-4 bottom-28 flex flex-col items-center gap-5 z-10">
-            {/* Download */}
-            <button
-              onClick={() => triggerDownload(activePreviewUrl)}
-              className="flex flex-col items-center gap-1 text-white cursor-pointer"
-            >
-              <div className="w-11 h-11 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center">
-                <Download className="w-5 h-5" />
-              </div>
-              <span className="text-[10px] font-medium">Save</span>
-            </button>
-
-            {/* Caption / comment placeholder */}
-            <button className="flex flex-col items-center gap-1 text-white cursor-pointer">
-              <div className="w-11 h-11 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center">
-                <MessageSquare className="w-5 h-5" />
-              </div>
-              <span className="text-[10px] font-medium">Caption</span>
-            </button>
-
-            {/* Scissors → opens editor */}
-            <button
-              onClick={() => { setActivePreviewUrl(null); setShowEditorUrl(activePreviewUrl); }}
-              className="flex flex-col items-center gap-1 text-white cursor-pointer"
-            >
-              <div className="w-11 h-11 rounded-full bg-orange-500/90 backdrop-blur-sm flex items-center justify-center shadow-lg">
-                <Scissors className="w-5 h-5" />
-              </div>
-              <span className="text-[10px] font-medium">Edit</span>
-            </button>
-
-            {/* Mic */}
-            <button className="flex flex-col items-center gap-1 text-white cursor-pointer">
-              <div className="w-11 h-11 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center">
-                <Mic className="w-5 h-5" />
-              </div>
-              <span className="text-[10px] font-medium">Voice</span>
-            </button>
-
-            {/* Music */}
-            <button className="flex flex-col items-center gap-1 text-white cursor-pointer">
-              <div className="w-11 h-11 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center">
-                <Music className="w-5 h-5" />
-              </div>
-              <span className="text-[10px] font-medium">Music</span>
-            </button>
-          </div>
-
-          {/* Bottom gradient */}
-          <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-black/50 to-transparent z-0 pointer-events-none" />
         </div>
       )}
 

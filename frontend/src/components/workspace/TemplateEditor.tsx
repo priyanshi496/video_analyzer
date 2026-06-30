@@ -468,12 +468,19 @@ export function TemplateEditor({ template, projectId, mediaAssets, onBack, onRen
                       }
                     `}
                   >
-                    {asset.thumbnail_url
-                      ? <img src={asset.thumbnail_url} alt={asset.filename} className="w-full h-full object-cover" />
-                      : <div className="w-full h-full bg-white/5 flex items-center justify-center">
-                          <Film className="w-5 h-5 text-white/20" />
-                        </div>
-                    }
+                    {asset.thumbnail_url ? (
+                      <img src={asset.thumbnail_url} alt={asset.filename} className="w-full h-full object-cover" />
+                    ) : asset.presigned_url ? (
+                      asset.is_image ? (
+                        <img src={asset.presigned_url} alt={asset.filename} className="w-full h-full object-cover" />
+                      ) : (
+                        <video src={asset.presigned_url + '#t=0.1'} className="w-full h-full object-cover" muted playsInline />
+                      )
+                    ) : (
+                      <div className="w-full h-full bg-white/5 flex items-center justify-center">
+                        <Film className="w-5 h-5 text-white/20" />
+                      </div>
+                    )}
 
                     {asset.duration && (
                       <div className="absolute bottom-1 right-1 bg-black/70 text-white text-[9px] font-mono px-1 py-0.5 rounded">
