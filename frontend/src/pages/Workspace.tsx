@@ -35,6 +35,7 @@ import { TemplatePicker } from '../components/workspace/TemplatePicker';
 import { TemplateEditor } from '../components/workspace/TemplateEditor';
 import { templatesService } from '../services/templates';
 import type { VideoTemplate } from '../services/templates';
+import PodcastPhase from '../components/workspace/PodcastPhase';
 
 // Chat flow phases
 type ChatPhase =
@@ -183,7 +184,7 @@ export default function Workspace() {
   };
 
   // Templates Mode States
-  const [activeMode, setActiveMode] = useState<'ai' | 'templates'>('ai');
+  const [activeMode, setActiveMode] = useState<'ai' | 'templates' | 'podcast'>('ai');
   const [selectedTemplate, setSelectedTemplate] = useState<VideoTemplate | null>(null);
 
   const handleTemplateRender = async (slotsMapping: any) => {
@@ -500,6 +501,16 @@ export default function Workspace() {
             >
               🎬 Layout Templates
             </button>
+            <button
+              onClick={() => setActiveMode('podcast')}
+              className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+                activeMode === 'podcast'
+                  ? 'bg-orange-500 text-white shadow-sm'
+                  : 'text-zinc-600 hover:text-zinc-950'
+              }`}
+            >
+              🎙️ Podcast
+            </button>
           </div>
         </div>
       )}
@@ -534,6 +545,11 @@ export default function Workspace() {
             )}
           </div>
         </div>
+      )}
+
+      {/* Podcast Mode View */}
+      {chatPhase !== 'upload' && activeMode === 'podcast' && (
+        <PodcastPhase projectId={projectId || ''} mediaAssets={mediaAssets} />
       )}
 
       {/* PHASE: Chat (has media) */}

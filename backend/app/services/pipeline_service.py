@@ -2822,16 +2822,18 @@ def render_project_from_template(self, project_id: str, job_id: str, template_id
             elif music_mode != "none" and music_query:
                 logging.info(f"🎵 [Template Engine] Adding template music background: {music_query}...")
                 from app.services.music_service import resolve_custom_music, mix_music_into_video
-                music_path = resolve_custom_music(music_query, tmpdir, skip_llm_expand=True)
-                if music_path and os.path.exists(music_path):
-                    mixed_reel_path = temp_dir_path / "final_video_mixed.mp4"
-                    try:
-                        mix_music_into_video(str(reel_path), music_path, str(mixed_reel_path))
-                        if mixed_reel_path.exists():
-                            reel_path = mixed_reel_path
-                            logging.info("🎵 [Template Engine] Music successfully mixed.")
-                    except Exception as mix_err:
-                        logging.error(f"❌ [Template Engine] Failed to mix music: {mix_err}")
+                music_result = resolve_custom_music(music_query, tmpdir, skip_llm_expand=True)
+                if music_result:
+                    music_path, song_title = music_result
+                    if music_path and os.path.exists(music_path):
+                        mixed_reel_path = temp_dir_path / "final_video_mixed.mp4"
+                        try:
+                            mix_music_into_video(str(reel_path), music_path, str(mixed_reel_path))
+                            if mixed_reel_path.exists():
+                                reel_path = mixed_reel_path
+                                logging.info(f"🎵 [Template Engine] Music successfully mixed: {song_title}")
+                        except Exception as mix_err:
+                            logging.error(f"❌ [Template Engine] Failed to mix music: {mix_err}")
                         
             # 6. Upload final video back to MinIO
             if reel_path.exists():
