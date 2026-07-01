@@ -35,9 +35,8 @@ class MomentDetectionService:
             base_url="https://integrate.api.nvidia.com/v1",
             api_key=settings.NVIDIA_API_KEY,
         )
-        # Use llama-3.1-nemotron-70b-instruct instead of gpt-oss-120b
-        # Nemotron is optimized for instruction-following and structured output
-        self.model = "nvidia/llama-3.1-nemotron-70b-instruct"
+        # Use meta/llama-3.1-70b-instruct from NVIDIA NIM directly
+        self.model = "meta/llama-3.1-70b-instruct"
 
     async def find_key_moments(
         self, 
@@ -78,7 +77,7 @@ class MomentDetectionService:
             return []
 
     async def _analyze_with_llm(self, transcript_text: str) -> List[Dict]:
-        """Use NVIDIA's gpt-oss-120b to identify important text segments."""
+        """Use NVIDIA's LLM to identify important text segments."""
         prompt = self._build_analysis_prompt(transcript_text)
 
         loop = asyncio.get_running_loop()
@@ -112,117 +111,76 @@ class MomentDetectionService:
             stream=False,
         )
         msg = completion.choices[0].message
-        # gpt-oss-120b is a reasoning model — final answer may be in
-        # content OR reasoning_content depending on the response
         content = msg.content
         reasoning = getattr(msg, "reasoning_content", None)
-        # Prefer content if non-empty, otherwise fall back to reasoning_content
         return content if content and content.strip() else (reasoning or "")
 
     def _build_analysis_prompt(self, transcript_text: str) -> str:
-        return f"""Find 4 powerful moments from this speech. Return ONLY the JSON array, nothing else.
+        return f"""Analyze the following transcript and find 4 powerful key moments.
+Also extract a comprehensive list of 25-35 important highlight words or phrases from the entire transcript. These must include:
+- Core calls to action (e.g. "today", "now", "start", "join")
+- Important lessons, takeaways, or concepts (e.g. "fundamentals", "shortcuts", "skills", "build", "career")
+- Key technologies, nouns, or tools (e.g. "LangChain", "MCP", "AI")
+- Statistics, figures, or metrics
+- Strong emphasis/power words (e.g. "serious", "completely", "must", "always")
 
 TRANSCRIPT:
 {transcript_text}
 
-JSON format (return ONLY this, no explanation):
-[
-  {{"text": "exact quote 8-15 words", "reason": "key_insight", "intensity": "high", "keywords": ["word1", "word2"]}},
-  {{"text": "another quote 8-15 words", "reason": "strong_opinion", "intensity": "high", "keywords": ["word1"]}}
-]"""
+JSON format (return ONLY this JSON object, do not wrap in markdown or anything else):
+{{
+  "moments": [
+    {{"text": "exact quote 8-15 words", "reason": "key_insight", "intensity": "high", "keywords": ["word1", "word2"]}}
+  ],
+  "global_keywords": ["keyword1", "keyword2", "keyword3", "phrase1", "phrase2"]
+}}"""
 
     def _parse_llm_response(self, response_text: str) -> List[Dict]:
-        """Parse LLM response — tries multiple strategies to extract valid JSON."""
+        """Parse LLM response — handles dictionary or array formats and extracts global_keywords."""
         if not response_text:
             logger.warning("Empty LLM response")
             return []
 
-        # Strategy 0: Look for the LAST JSON array in the response (reasoning models put JSON at the end)
-        all_arrays = re.findall(r'\[(?:[^[\]]|\[[^\]]*\])*\]', response_text, re.DOTALL)
-        if all_arrays:
-            # Try from last to first (reasoning models typically put answer at end)
-            for array_str in reversed(all_arrays):
-                try:
-                    parsed = json.loads(array_str)
-                    if isinstance(parsed, list) and parsed:
-                        valid = [s for s in parsed if isinstance(s, dict) and "text" in s and "reason" in s]
-                        if valid:
-                            logger.info(f"Strategy 0 (last array) succeeded: {len(valid)} segments")
-                            return self._normalize_segments(valid)
-                except json.JSONDecodeError:
-                    continue
-
-        # Strategy 1: Try direct JSON parse (cleanest case)
-        try:
-            parsed = json.loads(response_text.strip())
-            if isinstance(parsed, list):
-                valid = [s for s in parsed if "text" in s and "reason" in s]
-                if valid:
-                    logger.info(f"Strategy 1 (direct parse) succeeded: {len(valid)} segments")
-                    return self._normalize_segments(valid)
-        except json.JSONDecodeError as e:
-            logger.debug(f"Strategy 1 failed: {e}")
-
-        # Strategy 2: Extract JSON array from markdown or surrounded text
-        for pattern in [r'```json\s*(\[.*?\])\s*```', r'```\s*(\[.*?\])\s*```', r'(\[\s*\{.*?\}\s*\])']:
-            match = re.search(pattern, response_text, re.DOTALL)
-            if match:
-                try:
-                    parsed = json.loads(match.group(1))
-                    valid = [s for s in parsed if "text" in s and "reason" in s]
+        def process_parsed(parsed) -> Optional[List[Dict]]:
+            if isinstance(parsed, dict):
+                moments = parsed.get("moments", [])
+                global_keywords = parsed.get("global_keywords", [])
+                if isinstance(moments, list):
+                    valid = [s for s in moments if isinstance(s, dict) and "text" in s and "reason" in s]
                     if valid:
-                        logger.info(f"Strategy 2 (regex extract) succeeded: {len(valid)} segments")
+                        for s in valid:
+                            s["global_keywords"] = global_keywords
                         return self._normalize_segments(valid)
-                except json.JSONDecodeError:
-                    continue
-
-        # Strategy 3: Clean up common JSON errors (trailing commas, truncation)
-        try:
-            cleaned = re.sub(r',\s*([}\]])', r'\1', response_text)
-            cleaned = cleaned.strip()
-            if cleaned.count('[') > cleaned.count(']'):
-                cleaned = re.sub(r',?\s*\{[^}]*$', '', cleaned)
-                cleaned = cleaned.rstrip(',').rstrip() + ']'
-            match = re.search(r'\[.*?\]', cleaned, re.DOTALL)
-            if match:
-                parsed = json.loads(match.group())
-                valid = [s for s in parsed if "text" in s and "reason" in s]
+            elif isinstance(parsed, list):
+                valid = [s for s in parsed if isinstance(s, dict) and "text" in s and "reason" in s]
                 if valid:
-                    logger.info(f"Strategy 3 (cleanup) succeeded: {len(valid)} segments")
                     return self._normalize_segments(valid)
-        except Exception as e:
-            logger.debug(f"Strategy 3 failed: {e}")
+            return None
 
-        # Strategy 4: Extract individual JSON objects
+        # Strategy 0: Look for any JSON block (dictionary or array)
         try:
-            objects = re.findall(r'\{[^{}]*\}', response_text, re.DOTALL)
-            recovered = []
-            for obj_str in objects:
-                try:
-                    obj = json.loads(obj_str)
-                    if "text" in obj and "reason" in obj:
-                        recovered.append(obj)
-                    continue
-                except json.JSONDecodeError:
-                    pass
-                # Manual field extraction as last resort
-                text_m = re.search(r'"text"\s*:\s*"([^"]*)"', obj_str)
-                reason_m = re.search(r'"reason"\s*:\s*"([^"]*)"', obj_str)
-                intensity_m = re.search(r'"intensity"\s*:\s*"([^"]*)"', obj_str)
-                if text_m and reason_m:
-                    recovered.append({
-                        "text": text_m.group(1),
-                        "reason": reason_m.group(1),
-                        "intensity": intensity_m.group(1) if intensity_m else "medium",
-                        "keywords": [],
-                    })
-            if recovered:
-                valid = [s for s in recovered if "text" in s and "reason" in s]
-                if valid:
-                    logger.info(f"Strategy 4 (object recovery) succeeded: {len(valid)} segments")
-                    return self._normalize_segments(valid)
-        except Exception as e:
-            logger.debug(f"Strategy 4 failed: {e}")
+            stripped = response_text.strip()
+            md_match = re.search(r'```json\s*(\{.*?\}|\[.*?\])\s*```', stripped, re.DOTALL) or re.search(r'```\s*(\{.*?\}|\[.*?\])\s*```', stripped, re.DOTALL)
+            if md_match:
+                stripped = md_match.group(1)
+            
+            parsed = json.loads(stripped)
+            res = process_parsed(parsed)
+            if res:
+                return res
+        except Exception:
+            pass
+
+        # Strategy 1: Find all dictionaries or arrays using regex
+        all_blocks = re.findall(r'(\{.*?\}|\[.*?\])', response_text, re.DOTALL)
+        for block_str in reversed(all_blocks):
+            try:
+                parsed = json.loads(block_str)
+                res = process_parsed(parsed)
+                if res:
+                    return res
+            except Exception:
+                continue
 
         logger.error(f"Failed to parse LLM JSON response after all strategies. Response starts with: {response_text[:200]}")
         return []

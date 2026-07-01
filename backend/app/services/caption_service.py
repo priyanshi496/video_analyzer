@@ -132,60 +132,96 @@ class CaptionService:
         highlight_color: str = "#FFD60A",
     ) -> List[Dict]:
         """
-        Highlights keywords in 2-3 consecutive caption lines around each important moment.
-        This creates a more visible, sentence-length highlight effect.
+        Highlights important terms, CTAs, lessons, figures, and key words
+        in every caption segment across the entire video. Utilises LLM-extracted
+        global keywords as a priority.
         """
-        if not caption_segments or not important_moments:
+        if not caption_segments:
             return caption_segments
+
+        # Extract global keywords from LLM if present
+        llm_keywords = []
+        if important_moments:
+            # Gather all global_keywords from moments
+            llm_keywords = important_moments[0].get("global_keywords", [])
+            # Also add any moment-specific keywords
+            for m in important_moments:
+                llm_keywords.extend(m.get("keywords", []))
+        
+        # Convert all to lowercase for matching
+        llm_keywords_set = {k.lower().strip(".,!?;:\"'()[]") for k in llm_keywords if k}
 
         STOPWORDS = {
             "the", "a", "an", "is", "are", "was", "were", "i", "you",
             "it", "of", "to", "in", "on", "and", "or", "but", "so",
             "we", "they", "he", "she", "be", "as", "at", "by", "with",
+            "for", "his", "her", "my", "your", "our", "their", "this", "that",
+            "about", "from", "into", "than", "then", "them", "there", "has", "have", "had",
         }
 
-        for moment in important_moments:
-            moment_start = moment["start_time"]
-            moment_end = moment["end_time"]
-            
-            # Find all segments that overlap this moment
-            overlapping_indices = []
-            for i, segment in enumerate(caption_segments):
-                seg_start = segment["start_time"]
-                seg_end = segment["end_time"]
-                
-                if seg_start < moment_end and seg_end > moment_start:
-                    overlapping_indices.append(i)
-            
-            if not overlapping_indices:
+        # Priority words: CTAs, Lessons, Value, Stats, Emphasis
+        PRIORITY_WORDS = {
+            # CTA / Action words
+            "now", "today", "start", "stop", "change", "do", "must", "focus", "need", "go",
+            "listen", "learn", "grow", "build", "create", "decide", "choose", "action", "join",
+            "buy", "subscribe", "follow", "click", "comment", "share", "try", "make", "take",
+            # Value / Lesson / Key terms
+            "important", "lesson", "fundamentals", "shortcuts", "value", "key", "insight",
+            "success", "fail", "mistake", "truth", "secret", "power", "energy", "mindset", "goal",
+            "future", "career", "life", "business", "money", "growth", "results", "concept", "approach",
+            # Emphasis / Emotion / Power words
+            "never", "always", "completely", "perfectly", "danger", "warning", "absolutely",
+            "incredible", "crazy", "huge", "shocking", "amazing", "worst", "best", "greatest", "terrible",
+        }
+
+        for segment in caption_segments:
+            words = segment.get("words", [])
+            if not words:
                 continue
-            
-            # Highlight 2-3 consecutive lines around the moment center
-            # Find the centermost overlapping segment
-            center_idx = overlapping_indices[len(overlapping_indices) // 2]
-            
-            # Expand to include 1 segment before and 1 after (total 3 segments)
-            highlight_start = max(0, center_idx - 1)
-            highlight_end = min(len(caption_segments), center_idx + 2)
-            
-            # Apply highlighting to these 2-3 segments
-            for i in range(highlight_start, highlight_end):
-                segment = caption_segments[i]
-                
-                # Pick the longest meaningful word in this line as the keyword
-                candidates = [
-                    w["word"].strip(".,!?;:\"'") for w in segment["words"]
-                    if w["word"].strip(".,!?;:\"'").lower() not in STOPWORDS
-                    and len(w["word"].strip(".,!?;:\"'")) > 2
-                ]
-                
-                if candidates:
-                    keyword = max(candidates, key=len)
-                    segment["keyword"] = keyword
-                    segment["keyword_color"] = highlight_color
+
+            best_word = None
+            best_score = -1
+
+            for idx, w_data in enumerate(words):
+                raw_word = w_data["word"]
+                clean_word = raw_word.strip(".,!?;:\"'()[]")
+                clean_lower = clean_word.lower()
+
+                # Skip stopwords and very short words
+                if clean_lower in STOPWORDS or len(clean_word) <= 1:
+                    continue
+
+                score = 0
+
+                # 1. Exact match with LLM highlight keywords gets highest score
+                if clean_lower in llm_keywords_set:
+                    score += 250
+                # 2. Substring match with LLM highlight keywords (e.g. "building" matching "build")
+                elif any(clean_lower in kw or kw in clean_lower for kw in llm_keywords_set):
+                    score += 200
+                # 3. Numbers, percentages, money, stats
+                elif any(char.isdigit() for char in clean_word) or any(char in clean_word for char in ["$", "%", "€", "£"]):
+                    score += 150
+                # 4. Priority vocabulary (CTA, lessons, key concepts, emphasis)
+                elif clean_lower in PRIORITY_WORDS:
+                    score += 100
+                # 5. Capitalized words (except if it is just the first word starting a segment)
+                elif clean_word[0].isupper() and idx > 0:
+                    score += 50
+                # 6. Length-based heuristic for other meaningful words
+                else:
+                    score += len(clean_word)
+
+                if score > best_score:
+                    best_score = score
+                    best_word = clean_word
+
+            if best_word:
+                segment["keyword"] = best_word
+                segment["keyword_color"] = highlight_color
 
         highlighted_count = sum(1 for s in caption_segments if s.get("keyword"))
-        logger.info(f"Applied keyword highlights to {highlighted_count}/{len(caption_segments)} caption lines (2-3 lines per moment)")
+        logger.info(f"Applied keyword highlights to {highlighted_count}/{len(caption_segments)} caption lines using LLM keywords + smart scoring system.")
         return caption_segments
 
     def _is_natural_break(self, word: str) -> bool:
@@ -280,7 +316,7 @@ class CaptionService:
             f"fontcolor={options.font_color}",
             "box=1",
             "boxcolor=black@0.7",
-            "boxborderw=10",
+            "boxborderw=24",
         ]
         if font_file:
             parts.insert(-3, f"fontfile='{font_file}'")
@@ -347,14 +383,14 @@ class CaptionService:
             enable,
             f"x={line_left:.1f}",
             f"y={y_position}",
-            f"fontsize={base_size}",
+            f"fontsize={int(base_size * 1.12)}",
             f"fontcolor={options.font_color}@0.0",
             "box=1",
             "boxcolor=black@0.7",
-            "boxborderw=10",
+            "boxborderw=24",
         ]
-        if font_file:
-            backdrop_parts.insert(-3, f"fontfile='{font_file}'")
+        if bold_font_file:
+            backdrop_parts.insert(-3, f"fontfile='{bold_font_file}'")
         filters_out = ["drawtext=" + ":".join(backdrop_parts)]
 
         if before:
