@@ -1,3 +1,11 @@
+import os
+import sys
+
+# Prepend local bin containing static FFmpeg/FFprobe with drawtext support to PATH
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+local_bin = os.path.join(base_dir, "bin")
+os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
+
 import logging
 from fastapi import FastAPI
 from app.core.config import settings

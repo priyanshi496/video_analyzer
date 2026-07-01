@@ -167,6 +167,8 @@ def render_universal_template(
         #   (default) — text appears instantly at start, disappears at end
 
         drawtext_chains = []
+        temp_files = []
+        
         if text_tracks and _drawtext_available():
             # Discover local standard font
             standard_paths = [
@@ -190,8 +192,12 @@ def render_universal_template(
                 content = t.get("content", {})
                 # Use user-supplied value if present, else placeholder
                 text = content.get("value") or content.get("placeholder", "")
-                # Escape single quotes for FFmpeg using standard close-escape-reopen pattern
-                text = text.replace("'", "'\\''").replace(":", "\\:")
+                
+                # Write text to a temporary file to avoid FFmpeg escaping hell
+                tf = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt")
+                tf.write(text)
+                tf.close()
+                temp_files.append(tf.name)
 
                 style  = t.get("style", {})
                 anim   = t.get("animation", {})
@@ -207,6 +213,9 @@ def render_universal_template(
 
                 # Pick cursive or standard font
                 track_font = cursive_font_file if font_style == "cursive" else font_file
+
+                # Log to verify coordinates
+                logger.info(f"Text track start={tstart} tx={tx} ty={ty} text='{text}'")
 
                 # x position: center-align by default
                 if align == "center":
@@ -239,7 +248,7 @@ def render_universal_template(
                 use_box = style.get("box", False)
                 drawtext_params = (
                     f"drawtext="
-                    f"text='{text}'"
+                    f"textfile='{tf.name}'"
                 )
                 if track_font:
                     drawtext_params += f":fontfile='{track_font}'"
@@ -284,7 +293,14 @@ def render_universal_template(
                 output_path,
             ]
         )
-        _run(cmd, "universal render")
+        try:
+            _run(cmd, "universal render")
+        finally:
+            for tf in temp_files:
+                try:
+                    os.unlink(tf)
+                except Exception:
+                    pass
 
     logger.info(f"✅ [UniversalRenderer] Written to {output_path}")
     return output_path

@@ -26,7 +26,7 @@ export default function CompletedCard({
       <div className="bg-white rounded-3xl shadow-lg border border-orange-100/60 overflow-hidden w-full">
         {/* Video Container - Portrait (9:16) */}
         <div className="aspect-[9/16] bg-slate-950 relative group">
-          <video src={url} controls className="w-full h-full object-contain" />
+          <video src={url} controls playsInline className="w-full h-full object-contain" />
           
           {/* Custom Fullscreen Trigger Button overlay */}
           <button
