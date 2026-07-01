@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Plus, Film, Folder, Loader2, Trash2, SlidersHorizontal } from 'lucide-react';
-import { Button } from '../ui';
-import { projectService } from '../../services/projects';
+import { Button } from '../components/ui';
+import { projectService } from '../services/projects';
 import { useNavigate } from 'react-router-dom';
-import type { Project } from '../../types';
+import type { Project } from '../types';
 
 function relativeTime(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -17,7 +17,7 @@ function relativeTime(dateStr: string): string {
   return `${mins}m`;
 }
 
-export function Dashboard() {
+export default function Dashboard() {
   const navigate = useNavigate();
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,9 +45,9 @@ export function Dashboard() {
       const name = `Project ${projects.length + 1}`;
       const project = await projectService.createProject(name);
       navigate(`/project/${project.id}`);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Failed to create project');
+      alert(err.userMessage || 'Failed to create project. Please try again.');
     } finally {
       setCreating(false);
     }
@@ -58,9 +58,9 @@ export function Dashboard() {
     try {
       await projectService.deleteProject(projectToDelete);
       setProjects(prev => prev.filter(p => p.id !== projectToDelete));
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Failed to delete project');
+      alert(err.userMessage || 'Failed to delete project. Please try again.');
     } finally {
       setProjectToDelete(null);
     }

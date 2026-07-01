@@ -2,12 +2,14 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { useState } from 'react';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
-import { Dashboard } from './components/screens/Dashboard';
-import { Workspace } from './components/screens/Workspace';
+import Dashboard from './pages/Dashboard';
+import Workspace from './pages/Workspace';
+import Feed from './pages/Feed';
+import Focus from './pages/Focus';
+import Analytics from './pages/Analytics';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { BottomNav } from './components/layout/BottomNav';
-import { FeedScreen, FocusScreen, AnalyticsScreen } from './components/screens/DummyScreens';
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const token = localStorage.getItem('token');
@@ -72,7 +74,7 @@ function App() {
         <Route path="/feed" element={
           <ProtectedRoute>
             <AppLayout>
-              <FeedScreen />
+              <Feed />
             </AppLayout>
           </ProtectedRoute>
         } />
@@ -81,7 +83,7 @@ function App() {
         <Route path="/focus" element={
           <ProtectedRoute>
             <AppLayout>
-              <FocusScreen />
+              <Focus />
             </AppLayout>
           </ProtectedRoute>
         } />
@@ -89,7 +91,7 @@ function App() {
         <Route path="/analytics" element={
           <ProtectedRoute>
             <AppLayout>
-              <AnalyticsScreen />
+              <Analytics />
             </AppLayout>
           </ProtectedRoute>
         } />

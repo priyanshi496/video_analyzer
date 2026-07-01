@@ -58,20 +58,23 @@ def download_youtube_song(query: str, output_path: str) -> bool:
             logger.error("No mp3 file found in temp directory after yt-dlp execution.")
             return False
 
-def resolve_song_by_key(minio_key: str, query: str, tmpdir: str) -> str:
+def resolve_song_by_key(minio_key: str, query: str, tmpdir: str) -> tuple[str, str]:
     """
     Checks MinIO cache for key. If it exists, downloads it to tmpdir.
     If not, downloads using yt-dlp, uploads to MinIO at that key, and returns the path.
+    Returns a (local_path, song_title) tuple where song_title is derived from the query.
     """
     local_filename = os.path.basename(minio_key)
     local_path = os.path.join(tmpdir, local_filename)
+    # Use the query as the song title identifier for downstream Spotify lookup
+    song_title = query
     
     # Check MinIO
     if storage_service.object_exists(minio_key):
         logger.info(f"Cache hit in MinIO for {minio_key}. Downloading...")
         try:
             storage_service.download_file(minio_key, local_path)
-            return local_path
+            return local_path, song_title
         except Exception as e:
             logger.error(f"Failed to download cached song {minio_key} from MinIO: {e}. Falling back to yt-dlp.")
             
@@ -85,9 +88,9 @@ def resolve_song_by_key(minio_key: str, query: str, tmpdir: str) -> str:
                 storage_service.upload_file_obj(f, minio_key, content_type="audio/mpeg")
         except Exception as e:
             logger.error(f"Failed to upload downloaded song to MinIO: {e}")
-        return local_path
+        return local_path, song_title
         
-    return ""
+    return "", song_title
 
 def expand_short_query(query: str) -> str:
     """
@@ -111,13 +114,11 @@ def expand_short_query(query: str) -> str:
         logger.error(f"Failed to expand query via LLM: {e}")
         return f"{query} official audio"
 
-def resolve_custom_music(custom_query: str, tmpdir: str) -> str:
+def resolve_custom_music(custom_query: str, tmpdir: str, skip_llm_expand: bool = False) -> tuple[str, str]:
     """
-    Resolves custom song query. If the query matches (or partially matches)
-    a song track/keyword/slug in the preseeded catalog, it directly returns
-    the catalog song from MinIO without initiating a new download.
-    Otherwise, it uses the LLM to expand the query, checks if cached in
-    MinIO under custom prefix, and downloads only if missing.
+    Resolves custom song query. Returns a (local_path, song_title) tuple.
+    If the query matches (or partially matches) a song in the preseeded catalog,
+    it directly returns the catalog song. Otherwise expands via LLM and downloads.
     """
     normalized = custom_query.strip().lower()
     catalog_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "core", "music_catalog.json")
@@ -150,21 +151,29 @@ def resolve_custom_music(custom_query: str, tmpdir: str) -> str:
         logger.info(f"Custom query '{custom_query}' matched catalog song: {catalog_match['track']} by {catalog_match['artist']}. Using cached catalog version.")
         slug = catalog_match["slug"]
         minio_key = f"music/catalog/{slug}.mp3"
-        return resolve_song_by_key(minio_key, catalog_match["query"], tmpdir)
+        song_title = f"{catalog_match['track']} {catalog_match['artist']}"
+        local_path, _ = resolve_song_by_key(minio_key, catalog_match["query"], tmpdir)
+        return local_path, song_title
 
-    # Cache miss on pre-seeded catalog -> Expand query using LLM and check custom cache
-    logger.info(f"Custom query '{custom_query}' not found in pre-seeded catalog. Expanding via LLM...")
-    expanded = expand_short_query(custom_query)
+    # Cache miss on pre-seeded catalog -> Expand query if not skipped, check custom cache
+    logger.info(f"Custom query '{custom_query}' not found in pre-seeded catalog.")
+    if skip_llm_expand:
+        expanded = f"{custom_query} official audio"
+    else:
+        logger.info("Expanding via LLM...")
+        expanded = expand_short_query(custom_query)
     logger.info(f"Expanded custom query: '{expanded}'")
     
     slug = get_song_slug(expanded)
     minio_key = f"music/custom/{slug}.mp3"
-    return resolve_song_by_key(minio_key, expanded, tmpdir)
+    local_path, song_title = resolve_song_by_key(minio_key, expanded, tmpdir)
+    return local_path, song_title
 
-def pick_ai_music(vibe: str, final_segs: list, tmpdir: str) -> str:
+def pick_ai_music(vibe: str, final_segs: list, tmpdir: str) -> tuple[str, str]:
     """
     Pick the best song from the catalog based on the vibe preset and the vision analysis
     metadata (mood/vibe descriptions) in the final segments.
+    Returns a (local_path, song_title) tuple.
     """
     catalog_path = os.path.join(os.path.dirname(__file__), "..", "core", "music_catalog.json")
     try:
@@ -196,76 +205,56 @@ def pick_ai_music(vibe: str, final_segs: list, tmpdir: str) -> str:
     
     full_text = " ".join(segment_text)
     
-    # Analyze text for energy indicators
-    energy_up = ["fast", "active", "energetic", "run", "jump", "dance", "happy", "party", "celebrate", "excited", "upbeat"]
-    energy_down = ["slow", "calm", "peaceful", "quiet", "serene", "sad", "emotional", "relax", "meditative", "sleep"]
+    logger.info(f"AI Music Selection: vibe={vibe}, delegating directly to LLM evaluation...")
+    from app.services.llm_service import call_openrouter_text
     
-    energy_adj = 0
-    for word in energy_up:
-        energy_adj += full_text.count(word)
-    for word in energy_down:
-        energy_adj -= full_text.count(word)
-        
-    scaled_adj = max(-2, min(2, energy_adj // 3)) if energy_adj != 0 else 0
-    target_energy = max(1, min(10, vibe_target_energy + scaled_adj))
-    
-    logger.info(f"AI Music Selection: vibe={vibe}, vibe_target_energy={vibe_target_energy}, text_adj={scaled_adj}, final_target_energy={target_energy}")
-    
-    scored_songs = []
-    
+    # Build catalog summary for LLM
+    catalog_summary = []
     for song in catalog:
-        score = 0
+        catalog_summary.append({
+            "slug": song.get("slug"),
+            "artist": song.get("artist"),
+            "track": song.get("track"),
+            "mood": song.get("mood"),
+            "energy": song.get("energy"),
+            "keywords": song.get("keywords", [])
+        })
         
-        # Primary vibe matching
-        if vibe.lower() in [vt.lower() for vt in song.get("vibe_tags", [])]:
-            score += 15
-            
-        # Energy closeness
-        energy_diff = abs(song.get("energy", 5) - target_energy)
-        score += (10 - energy_diff)
-        
-        # Mood word alignment
-        song_mood = song.get("mood", "").lower()
-        if song_mood == "romantic" and any(w in full_text for w in ["love", "couple", "romantic", "romance", "together"]):
-            score += 5
-        elif song_mood == "happy" and any(w in full_text for w in ["happy", "joy", "smile", "laugh", "cheerful"]):
-            score += 5
-        elif song_mood == "sad" and any(w in full_text for w in ["sad", "emotional", "cry", "poignant", "sorrow"]):
-            score += 5
-        elif song_mood == "devotional" and any(w in full_text for w in ["god", "temple", "prayer", "spiritual", "devotional", "holy"]):
-            score += 5
-        elif song_mood == "motivational" and any(w in full_text for w in ["motivational", "power", "win", "run", "workout"]):
-            score += 5
-        elif song_mood == "chill" and any(w in full_text for w in ["chill", "relax", "calm", "slow", "peaceful"]):
-            score += 5
-
-        # Direct exact keyword matching (SUPER BOOST)
-        # If the story explicitly mentions a specific entity (like "Hanuman", "Garba"), boost the specific song heavily.
-        for kw in song.get("keywords", []):
-            if kw.lower() in full_text:
-                score += 50
-                break
-
-        scored_songs.append((score, song))
-            
-    if not scored_songs:
-        return ""
-        
-    import random
-    best_score = max(score for score, song in scored_songs)
+    prompt = (
+        f"You are a music supervisor. Based on the following video descriptions and mood flow, "
+        f"select the single best song from the provided catalog.\n\n"
+        f"Vibe requested: {vibe}\n"
+        f"Video Summary:\n{full_text}\n\n"
+        f"Catalog options:\n{json.dumps(catalog_summary, indent=2)}\n\n"
+        f"Rules:\n"
+        f"1. Choose the song that is culturally and semantically most appropriate for the video summary.\n"
+        f"2. Ensure the energy and mood of the song match the requested vibe and video context.\n"
+        f"3. Return ONLY the string value of the 'slug'.\n"
+        f"4. If absolutely NONE of the songs fit the context, return ONLY the word 'NOT_FOUND'.\n"
+    )
     
-    # Collect all songs that are tied for the top score, or within 1 point to add variety
-    top_contenders = [song for score, song in scored_songs if score >= best_score - 1]
-    
-    best_song = random.choice(top_contenders)
+    try:
+        text_model = "openrouter/owl-alpha"
+        fallbacks = ["openai/gpt-oss-120b:free"]
+        res = call_openrouter_text(prompt, model=text_model, fallbacks=fallbacks)
+        slug_res = res.strip().strip('"').strip("'")
+        if slug_res == "NOT_FOUND":
+            logger.info("LLM determined no songs match the context. Returning empty.")
+            return "", ""
             
-    if best_song:
-        logger.info(f"AI picked song: {best_song['track']} by {best_song['artist']} with score {best_score} (slug: {best_song['slug']})")
-        slug = best_song["slug"]
-        minio_key = f"music/catalog/{slug}.mp3"
-        return resolve_song_by_key(minio_key, best_song["query"], tmpdir)
-    
-    return ""
+        matched_song = next((s for s in catalog if s.get("slug") == slug_res), None)
+        if matched_song:
+            logger.info(f"LLM picked song: {matched_song['track']} by {matched_song['artist']} (slug: {slug_res})")
+            minio_key = f"music/catalog/{slug_res}.mp3"
+            song_title = f"{matched_song['track']} {matched_song['artist']}"
+            local_path, _ = resolve_song_by_key(minio_key, matched_song["query"], tmpdir)
+            return local_path, song_title
+        else:
+            logger.warning(f"LLM returned unknown slug: {slug_res}. Returning empty.")
+            return "", ""
+    except Exception as e:
+        logger.error(f"Failed LLM music selection: {e}")
+        return "", ""
 
 def get_video_duration(video_path: str) -> float:
     """Uses ffprobe to find the duration of a video file."""
@@ -281,12 +270,16 @@ def get_video_duration(video_path: str) -> float:
             pass
     return 30.0
 
-def mix_music_into_video(video_path: str, music_path: str, output_path: str):
+def mix_music_into_video(video_path: str, music_path: str, output_path: str, audio_start: float = 0.0):
     """
     Replaces the video's audio entirely with the music track.
     Loops the music track infinitely to fill the video duration,
     applies a fade-out filter to the last 1 second of the audio, and
     saves the output to output_path.
+
+    audio_start: seek position (seconds) in the music file to start from.
+                 Use this to skip the intro and start at the hookline / chorus.
+                 Defaults to 0.0 (beginning of the track).
     """
     duration = get_video_duration(video_path)
     start_fade = max(0.0, duration - 2.0)
@@ -295,6 +288,7 @@ def mix_music_into_video(video_path: str, music_path: str, output_path: str):
     cmd = [
         "ffmpeg", "-y",
         "-i", video_path,
+        "-ss", str(audio_start),   # seek to hookline before feeding the audio
         "-stream_loop", "-1",
         "-i", music_path,
         "-map", "0:v:0",

@@ -2,7 +2,7 @@ import logging
 from fastapi import FastAPI
 from app.core.config import settings
 
-from app.api.routes import projects, jobs, auth
+from app.api.routes import projects, jobs, auth, templates
 
 # Setup Basic Logging
 logging.basicConfig(
@@ -40,6 +40,7 @@ async def health_check():
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(projects.router, prefix="/api/v1/projects", tags=["projects"])
+app.include_router(templates.router, prefix="/api/v1/templates", tags=["templates"])
 app.include_router(jobs.router, prefix="/api/v1", tags=["jobs"])
 
 @app.on_event("startup")

@@ -935,7 +935,8 @@ You are provided with real-world Location and Time metadata for each asset. You 
 - If location metadata points to a specific place (e.g. "Shree Kashtabhanjan dev Hanuman Temple, Salangpur" or a specific town), refer to it directly in the title and narrative.
 - Do NOT use generic placeholder phrases like "Temple of the Giant Deity" if a specific real-world temple name is available.
 - Use the real-world creation times to structure the timeline of your narrative.
-
+- IMPORTANT RULE: If the location or time is "unknown", you must creatively invent a poetic, fictional location or time based on the visual setting.
+- ABSOLUTE PROHIBITION: You are a storyteller, not a computer. NEVER use the words "metadata", "assets", "data", "vision model", or "unknown" in your story. NEVER break the fourth wall or complain about missing data. If data is missing, just imagine the details!
 
 ━━━ VISUAL ANALYSIS (from vision AI) ━━━
 {desc_block}

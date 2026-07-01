@@ -27,3 +27,9 @@ librosa>=0.10.1
 scipy>=1.11.0
 numpy>=1.25.0
 matplotlib>=3.8.0
+spotipy>=2.23.0
+
+# Podcast processing dependencies
+faster-whisper>=1.0.0
+openai-whisper>=20231117
+nest-asyncio>=1.5.8
