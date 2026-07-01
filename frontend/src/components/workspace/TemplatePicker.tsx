@@ -14,6 +14,7 @@ function TemplateCard({ template, onSelect }: { template: VideoTemplate; onSelec
   const videoRef = useRef<HTMLVideoElement>(null)
   const [hovered, setHovered] = useState(false)
   const previewUrl = template.preview_url
+  const thumbnailUrl = (template as any).thumbnail_url
   const isBeatGrid = template.layout_mode === 'beat_grid'
 
   const totalDuration = template.slots.reduce((s, sl) => {
@@ -43,8 +44,9 @@ function TemplateCard({ template, onSelect }: { template: VideoTemplate; onSelec
           <video
             ref={videoRef}
             src={previewUrl}
+            poster={thumbnailUrl}
             className="w-full h-full object-cover"
-            loop muted playsInline preload="metadata"
+            loop playsInline preload="metadata"
           />
         ) : (
           /* Visual placeholder — shows the layout type */

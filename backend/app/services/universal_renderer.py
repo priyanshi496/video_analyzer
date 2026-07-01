@@ -122,6 +122,16 @@ def render_universal_template(
                 # fade in from black over fade_dur seconds
                 chain += f",fade=t=in:st=0:d={fade_dur}"
 
+            elif tin_type == "zoom_out":
+                fade_dur = float(tin.get("duration", 0.3))
+                fade_frames = int(fade_dur * FPS)
+                # Zoom out centered from 1.25x to 1.0x over fade_dur seconds
+                chain += (
+                    f",zoompan=z='if(lte(on\\,{fade_frames})\\,1.25-0.25*(on/{fade_frames})\\,1)':"
+                    f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                    f"d=1:s={W}x{H}"
+                )
+
             # elif tin_type == "cut": nothing extra needed
 
             chain += f"[v{i}]"

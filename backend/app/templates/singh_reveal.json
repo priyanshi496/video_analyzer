@@ -1,6 +1,6 @@
 {
   "id": "singh_reveal",
-  "name": "Singh Reveal",
+  "name": "Its hmmm",
   "description": "Two-scene landscape layout based on the reference video. 0-3s landscape first scene, 3-9s detail second scene, with yellow italic styling and no outro handle.",
   "aspect_ratio": "9:16",
   "canvas": { "w": 1080, "h": 1920, "fps": 30 },
@@ -29,14 +29,14 @@
       "type": "text", "slot_id": "slot_1",
       "start": 0.00, "end": 3.00,
       "content": { "editable": true, "placeholder": "When I say hm...its not hmmm" },
-      "style": { "size": 64, "color": "#FFD60A", "x": 540, "y": 960, "align": "center", "font_style": "cursive" },
+      "style": { "size": 64, "color": "#FFD60A", "x": 540, "y": 300, "align": "center", "font_style": "cursive" },
       "animation": { "type": "fade_in", "duration": 0.8 }
     },
     {
       "type": "text", "slot_id": "slot_2",
       "start": 3.00, "end": 9.00,
       "content": { "editable": true, "placeholder": "It's hmmmmmmmm...." },
-      "style": { "size": 64, "color": "#FFD60A", "x": 540, "y": 960, "align": "center", "font_style": "cursive" },
+      "style": { "size": 64, "color": "#FFD60A", "x": 540, "y": 300, "align": "center", "font_style": "cursive" },
       "animation": { "type": "fade_in", "duration": 0.8 }
     }
   ]

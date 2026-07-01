@@ -2810,7 +2810,9 @@ def render_project_from_template(self, project_id: str, job_id: str, template_id
                     mixed_reel_path = temp_dir_path / "final_video_mixed.mp4"
                     try:
                         from app.services.music_service import mix_music_into_video
-                        mix_music_into_video(str(reel_path), static_music_path, str(mixed_reel_path))
+                        music_start = template.get("music_start", 0.0)
+                        music_fade = template.get("music_fade", True)
+                        mix_music_into_video(str(reel_path), static_music_path, str(mixed_reel_path), audio_start=music_start, fade=music_fade)
                         if mixed_reel_path.exists():
                             reel_path = mixed_reel_path
                             logging.info("🎵 [Template Engine] Static music successfully mixed.")

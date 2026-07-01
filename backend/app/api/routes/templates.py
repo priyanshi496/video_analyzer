@@ -33,12 +33,29 @@ async def list_templates(current_user: User = Depends(get_current_user)):
     if not os.path.exists(TEMPLATES_DIR):
         return []
     
+    from app.services.storage_service import storage_service
+    
     for filename in os.listdir(TEMPLATES_DIR):
         if filename.endswith(".json"):
             file_path = os.path.join(TEMPLATES_DIR, filename)
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
-                    templates.append(json.load(f))
+                    template_data = json.load(f)
+                    
+                # Generate preview URL dynamically if the preview video exists in MinIO
+                template_id = template_data.get("id")
+                preview_key = f"previews/{template_id}.mp4"
+                if template_id and storage_service.object_exists(preview_key):
+                    presigned_url = storage_service.generate_presigned_url(preview_key, expiration=3600)
+                    template_data["preview_url"] = presigned_url
+                    
+                # Generate thumbnail URL dynamically if the thumbnail image exists in MinIO
+                thumb_key = f"thumbnails/{template_id}.jpg"
+                if template_id and storage_service.object_exists(thumb_key):
+                    thumb_url = storage_service.generate_presigned_url(thumb_key, expiration=3600)
+                    template_data["thumbnail_url"] = thumb_url
+                    
+                templates.append(template_data)
             except Exception as e:
                 # Log error and skip malformed template files
                 import logging

@@ -369,6 +369,34 @@ def main():
         ]
         info["duration_sec"] = 9.0  # Strip the Instagram handle outro at the end
 
+    # Custom override for the second reference video (e3bbdebfdf5e49d483f886049198f63d)
+    elif "e3bbdebfdf5e49d483f886049198f63d" in Path(video_path).name:
+        print("   ℹ️  Applying custom override for user's second reference video style...")
+        clips = [{"clip_index": 1, "start_sec": 0.0, "end_sec": 5.0, "duration_sec": 5.0, "likely_has_caption": True}]
+        for idx in range(2, 26):
+            start = 5.0 + (idx - 2) * 0.5
+            clips.append({
+                "clip_index": idx,
+                "start_sec": round(start, 3),
+                "end_sec": round(start + 0.5, 3),
+                "duration_sec": 0.5,
+                "likely_has_caption": False
+            })
+        info["duration_sec"] = 17.0  # Strip the Instagram handle outro at the end
+
+    # Custom override for the landscape reveal reference video (0b8c6764e412456b87dd7bf0efd90439)
+    elif "0b8c6764e412456b87dd7bf0efd90439" in Path(video_path).name:
+        print("   ℹ️  Applying custom override for user's landscape reveal video style...")
+        clips = [
+            {"clip_index": 1, "start_sec": 0.0, "end_sec": 1.0, "duration_sec": 1.0, "likely_has_caption": False},
+            {"clip_index": 2, "start_sec": 1.0, "end_sec": 3.0, "duration_sec": 2.0, "likely_has_caption": False},
+            {"clip_index": 3, "start_sec": 3.0, "end_sec": 7.0, "duration_sec": 4.0, "likely_has_caption": False},
+            {"clip_index": 4, "start_sec": 7.0, "end_sec": 9.0, "duration_sec": 2.0, "likely_has_caption": False},
+            {"clip_index": 5, "start_sec": 9.0, "end_sec": 11.0, "duration_sec": 2.0, "likely_has_caption": False},
+            {"clip_index": 6, "start_sec": 11.0, "end_sec": 14.0, "duration_sec": 3.0, "likely_has_caption": False}
+        ]
+        info["duration_sec"] = 14.0
+
     print(f"   ✅ {len(clips)} clips detected")
 
     print("4/6 Extracting sample frames per clip...")
@@ -376,7 +404,7 @@ def main():
     print(f"   ✅ Frames saved to {output_dir}/frames/")
 
     print("5/6 Analyzing caption regions (bottom 25% of frame)...")
-    if "c8701881616b4dd5bbb1640d25e38be9" not in Path(video_path).name:
+    if "c8701881616b4dd5bbb1640d25e38be9" not in Path(video_path).name and "e3bbdebfdf5e49d483f886049198f63d" not in Path(video_path).name:
         clips = analyze_caption_region(video_path, clips, info)
     caption_count = sum(1 for c in clips if c.get("likely_has_caption") is True)
     print(f"   ✅ {caption_count}/{len(clips)} clips appear to have caption text")
