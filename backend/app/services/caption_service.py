@@ -179,6 +179,7 @@ class CaptionService:
             if not words:
                 continue
 
+            segment_highlights = []
             best_word = None
             best_score = -1
 
@@ -212,16 +213,32 @@ class CaptionService:
                 else:
                     score += len(clean_word)
 
+                # Keep track of highest-scoring word for single-word fallbacks
                 if score > best_score:
                     best_score = score
                     best_word = clean_word
 
-            if best_word:
+                # If the word matches LLM keywords or Priority Words or has a high score, highlight it
+                if score >= 100 or clean_lower in llm_keywords_set or clean_lower in PRIORITY_WORDS:
+                    segment_highlights.append(clean_word)
+
+            # De-duplicate while preserving order
+            unique_highlights = []
+            for h in segment_highlights:
+                if h not in unique_highlights:
+                    unique_highlights.append(h)
+
+            if unique_highlights:
+                segment["highlighted_words"] = unique_highlights
+                segment["keyword"] = best_word or unique_highlights[0]
+                segment["keyword_color"] = highlight_color
+            elif best_word:
+                segment["highlighted_words"] = [best_word]
                 segment["keyword"] = best_word
                 segment["keyword_color"] = highlight_color
 
-        highlighted_count = sum(1 for s in caption_segments if s.get("keyword"))
-        logger.info(f"Applied keyword highlights to {highlighted_count}/{len(caption_segments)} caption lines using LLM keywords + smart scoring system.")
+        highlighted_count = sum(1 for s in caption_segments if s.get("highlighted_words"))
+        logger.info(f"Applied keyword highlights to {highlighted_count}/{len(caption_segments)} caption lines using LLM keywords + smart scoring system (multi-word enabled).")
         return caption_segments
 
     def _is_natural_break(self, word: str) -> bool:
@@ -283,10 +300,17 @@ class CaptionService:
 
         filters = []
         for segment in caption_segments:
+            highlighted_words = segment.get("highlighted_words", [])
             keyword = segment.get("keyword")
             y_position = self._calculate_position(options.caption_position, options.font_size)
 
-            if keyword and keyword in segment["text"] and PIL_AVAILABLE:
+            if highlighted_words and PIL_AVAILABLE:
+                filters.extend(
+                    self._build_multi_highlighted_line_filters(
+                        segment, highlighted_words, y_position, options, font_file, bold_font_file
+                    )
+                )
+            elif keyword and keyword in segment["text"] and PIL_AVAILABLE:
                 filters.extend(
                     self._build_highlighted_line_filters(
                         segment, keyword, y_position, options, font_file, bold_font_file
@@ -301,6 +325,98 @@ class CaptionService:
                 )
 
         return ",".join(filters)
+
+    def _build_multi_highlighted_line_filters(
+        self, segment, highlighted_words, y_position, options, font_file, bold_font_file
+    ) -> List[str]:
+        """
+        Builds FFmpeg drawtext filters for lines with multiple highlighted keywords.
+        Ensures perfect word-by-word placement and a wide, padded black backdrop box.
+        """
+        text = segment["text"]
+        start_time = segment["start_time"]
+        end_time = segment["end_time"]
+        keyword_color = segment.get("keyword_color") or "#FFD60A"
+
+        # Make clean lowercase set for lookups
+        highlighted_set = {w.lower().strip(".,!?;:\"'()[]") for w in highlighted_words if w}
+
+        base_size = options.font_size
+        keyword_size = int(base_size * 1.05)
+        video_w = getattr(options, "video_width", 1080)
+
+        # Split text into words, preserving spaces
+        raw_words = text.split(" ")
+        space_w = self._measure_text_width(" ", font_file, base_size)
+
+        word_widths = []
+        is_highlighted = []
+        for rw in raw_words:
+            clean = rw.strip(".,!?;:\"'()[]").lower()
+            highlight = clean in highlighted_set
+            is_highlighted.append(highlight)
+            if highlight:
+                w = self._measure_text_width(rw, bold_font_file, keyword_size)
+            else:
+                w = self._measure_text_width(rw, font_file, base_size)
+            word_widths.append(w)
+
+        # Calculate exact total width of custom rendered string
+        total_w = sum(word_widths) + space_w * (len(raw_words) - 1)
+        line_left = (video_w - total_w) / 2
+
+        enable = f"enable='between(t,{start_time:.3f},{end_time:.3f})'"
+
+        # Draw a black background box matching the text's total width, padded with extra margin
+        padding_px = int(space_w * 2.5)  # 2.5 spaces worth of padding on each side
+        padded_line_left = line_left - padding_px
+        padded_w = total_w + (2 * padding_px)
+
+        # Generate a string of spaces of matching width to draw the background box
+        num_spaces = max(1, int(padded_w / space_w))
+        backdrop_text = " " * num_spaces
+
+        backdrop_parts = [
+            f"text='{backdrop_text}'",
+            enable,
+            f"x={padded_line_left:.1f}",
+            f"y={y_position}",
+            f"fontsize={base_size}",
+            f"fontcolor={options.font_color}@0.0",
+            "box=1",
+            "boxcolor=black@0.7",
+            "boxborderw=24",
+        ]
+        if font_file:
+            backdrop_parts.insert(-3, f"fontfile='{font_file}'")
+        
+        filters_out = ["drawtext=" + ":".join(backdrop_parts)]
+
+        # Render word-by-word over the backdrop
+        current_x = line_left
+        for i, rw in enumerate(raw_words):
+            esc_word = self._escape_text_for_ffmpeg(rw)
+            if not esc_word:
+                current_x += word_widths[i] + space_w
+                continue
+
+            highlight = is_highlighted[i]
+            parts = [
+                f"text='{esc_word}'",
+                enable,
+                f"x={current_x:.1f}",
+                f"y={y_position}",
+                f"fontsize={keyword_size if highlight else base_size}",
+                f"fontcolor={keyword_color if highlight else options.font_color}",
+            ]
+            f_file = bold_font_file if highlight else font_file
+            if f_file:
+                parts.insert(-1, f"fontfile='{f_file}'")
+
+            filters_out.append("drawtext=" + ":".join(parts))
+            current_x += word_widths[i] + space_w
+
+        return filters_out
 
     def _build_plain_line_filter(
         self, text, start_time, end_time, y_position, options, font_file

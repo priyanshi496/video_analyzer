@@ -168,14 +168,23 @@ def render_universal_template(
 
         drawtext_chains = []
         if text_tracks and _drawtext_available():
-            # Discover local font file to prevent missing font errors
-            font_paths = [
+            # Discover local standard font
+            standard_paths = [
                 "/System/Library/Fonts/Supplemental/Arial.ttf",
                 "/System/Library/Fonts/Helvetica.ttc",
                 "/Library/Fonts/Arial.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             ]
-            font_file = next((p for p in font_paths if os.path.exists(p)), None)
+            font_file = next((p for p in standard_paths if os.path.exists(p)), None)
+
+            # Discover local cursive font
+            cursive_paths = [
+                "/System/Library/Fonts/Supplemental/Brush Script.ttf",
+                "/System/Library/Fonts/Supplemental/SignPainter.ttc",
+                "/System/Library/Fonts/Supplemental/SnellRoundhand.ttc",
+                "/System/Library/Fonts/Supplemental/Bradley Hand Bold.ttf",
+            ]
+            cursive_font_file = next((p for p in cursive_paths if os.path.exists(p)), font_file)
 
             for t in text_tracks:
                 content = t.get("content", {})
@@ -194,6 +203,10 @@ def render_universal_template(
                 tx         = style.get("x", W // 2)
                 ty         = int(style.get("y", H - 200))
                 align      = style.get("align", "center")
+                font_style = style.get("font_style", "")
+
+                # Pick cursive or standard font
+                track_font = cursive_font_file if font_style == "cursive" else font_file
 
                 # x position: center-align by default
                 if align == "center":
@@ -216,13 +229,20 @@ def render_universal_template(
                 else:
                     y_expr = str(ty)
 
+                # alpha animation (fade-in)
+                if anim_type == "fade_in":
+                    adur = float(anim.get("duration", 0.6))
+                    alpha_expr = f"if(lt(t\\,{tstart})\\,0\\,if(lt(t\\,{tstart+adur:.3f})\\,(t-{tstart})/{adur:.3f}\\,1))"
+                else:
+                    alpha_expr = "1"
+
                 use_box = style.get("box", False)
                 drawtext_params = (
                     f"drawtext="
                     f"text='{text}'"
                 )
-                if font_file:
-                    drawtext_params += f":fontfile='{font_file}'"
+                if track_font:
+                    drawtext_params += f":fontfile='{track_font}'"
                 drawtext_params += (
                     f":fontsize={font_size}"
                     f":fontcolor=0x{font_color}"
@@ -230,6 +250,7 @@ def render_universal_template(
                     f":bordercolor=black"
                     f":x={x_expr}"
                     f":y={y_expr}"
+                    f":alpha='{alpha_expr}'"
                     f":enable='between(t\\,{tstart}\\,{tend})'"
                 )
                 if use_box:

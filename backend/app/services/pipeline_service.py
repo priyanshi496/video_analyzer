@@ -2773,9 +2773,27 @@ def render_project_from_template(self, project_id: str, job_id: str, template_id
             music_file  = template.get("music_file")  # relative path for static mode
 
             if music_mode == "static" and music_file:
-                # Use a bundled local audio file (relative to backend root)
+                # Resolve local path (relative to backend root)
                 backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                 static_music_path = os.path.join(backend_root, music_file)
+                
+                # Check MinIO fallback if not found locally
+                if not os.path.exists(static_music_path):
+                    from app.services.storage_service import storage_service
+                    # Normalize MinIO key (e.g. remove static/ prefix if present)
+                    minio_key = music_file
+                    if minio_key.startswith("static/"):
+                        minio_key = minio_key.replace("static/", "")
+                    
+                    if storage_service.object_exists(minio_key):
+                        logging.info(f"🎵 [Template Engine] Static music found in MinIO at: {minio_key}. Downloading...")
+                        try:
+                            temp_music_path = temp_dir_path / os.path.basename(minio_key)
+                            storage_service.download_file(minio_key, str(temp_music_path))
+                            static_music_path = str(temp_music_path)
+                        except Exception as dl_err:
+                            logging.error(f"❌ [Template Engine] Failed to download static music {minio_key} from MinIO: {dl_err}")
+
                 if os.path.exists(static_music_path):
                     logging.info(f"🎵 [Template Engine] Using static music: {static_music_path}")
                     mixed_reel_path = temp_dir_path / "final_video_mixed.mp4"
@@ -2788,7 +2806,7 @@ def render_project_from_template(self, project_id: str, job_id: str, template_id
                     except Exception as mix_err:
                         logging.error(f"❌ [Template Engine] Failed to mix static music: {mix_err}")
                 else:
-                    logging.warning(f"⚠️ [Template Engine] Static music file not found: {static_music_path}. Skipping music.")
+                    logging.warning(f"⚠️ [Template Engine] Static music file not found in local path or MinIO: {music_file}. Skipping music.")
 
             elif music_mode != "none" and music_query:
                 logging.info(f"🎵 [Template Engine] Adding template music background: {music_query}...")
