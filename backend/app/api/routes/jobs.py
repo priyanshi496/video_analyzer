@@ -1,8 +1,9 @@
 from __future__ import annotations
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any, Optional, Literal
 import uuid
+import logging
 from sqlalchemy import or_
 
 from app.core.database import get_db
@@ -15,6 +16,10 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from app.core.security import get_current_user
 
+# Import podcast services
+from app.services.podcast_service import podcast_service, PodcastProcessingOptions
+
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 class MusicRequest(BaseModel):
@@ -47,6 +52,32 @@ class AnalyzedClipResponse(BaseModel):
     story_position: int
     metadata_json: Dict[str, Any]
     url: Optional[str] = None
+
+# New Pydantic models for podcast processing
+class PodcastAnalyzeRequest(BaseModel):
+    caption_style: Literal["word_by_word", "line_by_line"] = "line_by_line"
+    words_per_line: int = 4
+    zoom_detection: Literal["auto_llm", "manual"] = "auto_llm"
+    zoom_intensity: float = 1.3
+    caption_position: Literal["bottom", "top", "center"] = "bottom"
+    font_size: int = 48
+    font_color: str = "white"
+
+class TranscriptResponse(BaseModel):
+    job_id: str
+    text: str
+    language: str
+    duration: float
+    words: List[Dict[str, Any]]
+    segments: List[Dict[str, Any]]
+
+class PodcastTimelineResponse(BaseModel):
+    job_id: str
+    final_video_url: Optional[str] = None
+    transcript: Dict[str, Any]
+    caption_segments: List[Dict[str, Any]]
+    important_moments: List[Dict[str, Any]]
+    zoom_effects: List[Dict[str, Any]]
 
 @router.post("/projects/{project_id}/analyze", response_model=JobStatusResponse)
 async def start_analysis_job(
@@ -561,5 +592,253 @@ async def get_clips_urls(
             urls.append(clip_url)
             
     return urls
+
+
+# PODCAST PROCESSING ENDPOINTS
+
+@router.post("/projects/{project_id}/analyze-podcast", response_model=JobStatusResponse)
+async def start_podcast_analysis(
+    project_id: uuid.UUID,
+    request: PodcastAnalyzeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Start podcast video processing with transcription, captions, and auto-zoom"""
+    try:
+        # Verify project exists and has media assets
+        project_result = await db.execute(
+            select(Project)
+            .options(selectinload(Project.media_assets))
+            .filter(Project.id == project_id, or_(Project.user_id == current_user.id, Project.user_id == None))
+        )
+        project = project_result.scalar_one_or_none()
+        
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        if not project.media_assets:
+            raise HTTPException(status_code=400, detail="Project has no media assets")
+
+        # For podcast processing, we expect exactly one talking-head video
+        if len(project.media_assets) > 1:
+            raise HTTPException(
+                status_code=400, 
+                detail="Podcast processing supports one video at a time. Please create a new project with a single talking-head video."
+            )
+
+        # Create analysis job for podcast processing
+        job = AnalysisJob(
+            project_id=project_id,
+            status=JobStatus.PENDING,
+            progress=0,
+            vibe="podcast",  # Special vibe for podcast processing
+            directives=f"Podcast processing: {request.caption_style} captions, {request.zoom_detection} zoom detection",
+            music_config={"mode": "none"}  # No music for podcast processing
+        )
+        db.add(job)
+        await db.commit()
+        await db.refresh(job)
+
+        # Start podcast processing in background
+        from app.tasks.podcast_tasks import process_podcast_video_task
+        
+        video_asset = project.media_assets[0]
+        
+        # Convert processing options
+        options = PodcastProcessingOptions(
+            caption_style=request.caption_style,
+            words_per_line=request.words_per_line,
+            zoom_detection=request.zoom_detection,
+            zoom_intensity=request.zoom_intensity,
+            caption_position=request.caption_position,
+            font_size=request.font_size,
+            font_color=request.font_color
+        )
+        
+        process_podcast_video_task.delay(
+            job_id=str(job.id),
+            project_id=str(project_id),
+            video_storage_path=video_asset.object_key,
+            processing_options=options.__dict__
+        )
+
+        return JobStatusResponse(
+            id=str(job.id),
+            project_id=str(job.project_id),
+            status=job.status,
+            progress=job.progress,
+            error_message=job.error_message,
+            created_at=str(job.created_at),
+            final_video_url=None
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        err = traceback.format_exc()
+        logger.error(f"Failed to start podcast analysis: {err}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/jobs/{job_id}/transcript", response_model=TranscriptResponse)
+async def get_job_transcript(
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get transcript data for a podcast job"""
+    try:
+        # Verify job exists and belongs to user
+        job_result = await db.execute(
+            select(AnalysisJob)
+            .join(Project, Project.id == AnalysisJob.project_id)
+            .filter(AnalysisJob.id == job_id, or_(Project.user_id == current_user.id, Project.user_id == None))
+        )
+        job = job_result.scalar_one_or_none()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        # Get transcript from podcast service
+        transcript_data = await podcast_service.get_transcript_by_job_id(str(job_id))
+        
+        if not transcript_data:
+            raise HTTPException(status_code=404, detail="Transcript not found. Job may not be a podcast job or not yet completed.")
+
+        return TranscriptResponse(
+            job_id=str(job_id),
+            text=transcript_data["text"],
+            language=transcript_data["language"],
+            duration=transcript_data["duration"],
+            words=transcript_data["words"],
+            segments=transcript_data["segments"]
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get transcript for job {job_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/jobs/{job_id}/regenerate-captions")
+async def regenerate_job_captions(
+    job_id: uuid.UUID,
+    request: PodcastAnalyzeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Regenerate captions with different options"""
+    try:
+        # Verify job exists and belongs to user
+        job_result = await db.execute(
+            select(AnalysisJob)
+            .join(Project, Project.id == AnalysisJob.project_id)
+            .filter(AnalysisJob.id == job_id, or_(Project.user_id == current_user.id, Project.user_id == None))
+        )
+        job = job_result.scalar_one_or_none()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        # Get original transcript
+        transcript_data = await podcast_service.get_transcript_by_job_id(str(job_id))
+        if not transcript_data:
+            raise HTTPException(status_code=404, detail="Original transcript not found")
+
+        # Regenerate captions with new options
+        options = PodcastProcessingOptions(
+            caption_style=request.caption_style,
+            words_per_line=request.words_per_line,
+            zoom_detection=request.zoom_detection,
+            zoom_intensity=request.zoom_intensity,
+            caption_position=request.caption_position,
+            font_size=request.font_size,
+            font_color=request.font_color
+        )
+        
+        new_captions = await podcast_service.regenerate_captions(
+            str(job_id),
+            transcript_data["words"],
+            options
+        )
+        
+        return {
+            "job_id": str(job_id),
+            "caption_segments": new_captions,
+            "message": "Captions regenerated successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to regenerate captions for job {job_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/projects/{project_id}/podcast-timeline", response_model=PodcastTimelineResponse)
+async def get_podcast_timeline(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get podcast-specific timeline with captions and zoom markers"""
+    try:
+        # Verify project belongs to user
+        proj_result = await db.execute(
+            select(Project).filter(Project.id == project_id, or_(Project.user_id == current_user.id, Project.user_id == None))
+        )
+        if not proj_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        # Find the most recent podcast job
+        job_result = await db.execute(
+            select(AnalysisJob)
+            .filter(
+                AnalysisJob.project_id == project_id, 
+                AnalysisJob.vibe == "podcast",
+                AnalysisJob.status == JobStatus.COMPLETED
+            )
+            .order_by(AnalysisJob.created_at.desc())
+        )
+        job = job_result.scalars().first()
+        
+        if not job:
+            raise HTTPException(status_code=404, detail="No completed podcast analysis job found for this project")
+
+        # Get podcast processing results from storage
+        job_id = str(job.id)
+        
+        # Get transcript
+        transcript_data = await podcast_service.get_transcript_by_job_id(job_id)
+        if not transcript_data:
+            raise HTTPException(status_code=404, detail="Transcript data not found")
+
+        # Get processing results from metadata (stored during processing)
+        processing_metadata = job.metadata_json or {}
+        
+        caption_segments = processing_metadata.get("caption_segments", [])
+        important_moments = processing_metadata.get("important_moments", [])
+        zoom_effects = processing_metadata.get("zoom_effects", [])
+
+        # Always generate a fresh presigned URL (stored ones expire after 1h)
+        final_video_url = storage_service.generate_presigned_url(
+            f"podcast_outputs/{job_id}/final_video.mp4",
+            expiration=86400  # 24 hours
+        )
+
+        return PodcastTimelineResponse(
+            job_id=job_id,
+            final_video_url=final_video_url,
+            transcript=transcript_data,
+            caption_segments=caption_segments,
+            important_moments=important_moments,
+            zoom_effects=zoom_effects
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get podcast timeline for project {project_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
