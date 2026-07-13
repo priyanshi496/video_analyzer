@@ -148,7 +148,8 @@ def stitch_clips(
     if not clip_paths:
         raise RuntimeError("No clips available to stitch.")
 
-    concat_list = Path("concat_list.txt")
+    import uuid
+    concat_list = Path(output_path).parent / f"concat_list_{uuid.uuid4().hex}.txt"
     with open(concat_list, "w") as f:
         for p in clip_paths:
             f.write(f"file '{p}'\n")
@@ -238,7 +239,6 @@ def build_reel_from_segments(
             logging.info(f"  📱 Detected portrait preference ({portrait_count} vs {landscape_count}). Output resolution set to 1080x1920.")
 
     if clips_dir.exists():
-        import shutil
         shutil.rmtree(clips_dir)
     clips_dir.mkdir(exist_ok=True)
     ordered_clip_paths = []
