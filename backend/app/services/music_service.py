@@ -270,16 +270,17 @@ def get_video_duration(video_path: str) -> float:
             pass
     return 30.0
 
-def mix_music_into_video(video_path: str, music_path: str, output_path: str, audio_start: float = 0.0):
+def mix_music_into_video(video_path: str, music_path: str, output_path: str, audio_start: float = 0.0, fade: bool = True):
     """
     Replaces the video's audio entirely with the music track.
     Loops the music track infinitely to fill the video duration,
-    applies a fade-out filter to the last 1 second of the audio, and
+    optionally applies a fade-out filter to the last 1 second of the audio, and
     saves the output to output_path.
 
     audio_start: seek position (seconds) in the music file to start from.
                  Use this to skip the intro and start at the hookline / chorus.
                  Defaults to 0.0 (beginning of the track).
+    fade: whether to apply a fade-out filter at the end of the video.
     """
     duration = get_video_duration(video_path)
     start_fade = max(0.0, duration - 2.0)
@@ -296,10 +297,14 @@ def mix_music_into_video(video_path: str, music_path: str, output_path: str, aud
         "-c:v", "copy",
         "-c:a", "aac",
         "-b:a", "192k",
-        "-af", f"afade=t=out:st={start_fade}:d={fade_duration}",
+    ]
+    if fade:
+        cmd.extend(["-af", f"afade=t=out:st={start_fade}:d={fade_duration}"])
+    
+    cmd.extend([
         "-t", f"{duration}",
         output_path
-    ]
+    ])
     
     logger.info(f"Mixing music into video. Video: {video_path}, Music: {music_path}, Output: {output_path}")
     logger.info(f"FFmpeg mix command: {' '.join(cmd)}")

@@ -1,0 +1,227 @@
+{
+  "id": "corporate_vlog",
+  "name": "Bahar Nikloo",
+  "description": "Multi-scene travel vlog layout. Features a 5-second intro with 6 sequentially flashing text overlays on a black background, a zoom-out transition at 5.0s, followed by 24 rapid-fire 0.5-second cuts.",
+  "aspect_ratio": "9:16",
+  "canvas": { "w": 1080, "h": 1920, "fps": 30 },
+  "music_mode": "static",
+  "music_file": "music/corporate_vlog_song.mp3",
+  "music_volume": 0.15,
+  "music_start": 0.0,
+  "total_duration": 17.0,
+  "slots": [
+    { "id": "slot_1", "label": "Intro Background (0-5s) | Text 1: Jhooth bolo" },
+    { "id": "slot_2", "label": "Scene 2 (5.0s - 5.5s) | Text 2: Jhagada karo" },
+    { "id": "slot_3", "label": "Scene 3 (5.5s - 6.0s) | Text 3: Bahane banao" },
+    { "id": "slot_4", "label": "Scene 4 (6.0s - 6.5s) | Text 4: Lekin" },
+    { "id": "slot_5", "label": "Scene 5 (6.5s - 7.0s) | Text 5: Ghar se" },
+    { "id": "slot_6", "label": "Scene 6 (7.0s - 7.5s) | Text 6: BAHAR NIKLO!!!" },
+    { "id": "slot_7", "label": "Scene 7 (7.5s - 8.0s) | Clip 6" },
+    { "id": "slot_8", "label": "Scene 8 (8.0s - 8.5s) | Clip 7" },
+    { "id": "slot_9", "label": "Scene 9 (8.5s - 9.0s) | Clip 8" },
+    { "id": "slot_10", "label": "Scene 10 (9.0s - 9.5s) | Clip 9" },
+    { "id": "slot_11", "label": "Scene 11 (9.5s - 10.0s) | Clip 10" },
+    { "id": "slot_12", "label": "Scene 12 (10.0s - 10.5s) | Clip 11" },
+    { "id": "slot_13", "label": "Scene 13 (10.5s - 11.0s) | Clip 12" },
+    { "id": "slot_14", "label": "Scene 14 (11.0s - 11.5s) | Clip 13" },
+    { "id": "slot_15", "label": "Scene 15 (11.5s - 12.0s) | Clip 14" },
+    { "id": "slot_16", "label": "Scene 16 (12.0s - 12.5s) | Clip 15" },
+    { "id": "slot_17", "label": "Scene 17 (12.5s - 13.0s) | Clip 16" },
+    { "id": "slot_18", "label": "Scene 18 (13.0s - 13.5s) | Clip 17" },
+    { "id": "slot_19", "label": "Scene 19 (13.5s - 14.0s) | Clip 18" },
+    { "id": "slot_20", "label": "Scene 20 (14.0s - 14.5s) | Clip 19" },
+    { "id": "slot_21", "label": "Scene 21 (14.5s - 15.0s) | Clip 20" },
+    { "id": "slot_22", "label": "Scene 22 (15.0s - 15.5s) | Clip 21" },
+    { "id": "slot_23", "label": "Scene 23 (15.5s - 16.0s) | Clip 22" },
+    { "id": "slot_24", "label": "Scene 24 (16.0s - 16.5s) | Clip 23" },
+    { "id": "slot_25", "label": "Scene 25 (16.5s - 17.0s) | Clip 24" }
+  ],
+  "tracks": [
+    {
+      "slot_id": "slot_1", "type": "video",
+      "start": 0.00, "end": 5.00,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_2", "type": "video",
+      "start": 5.00, "end": 5.50,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "zoom_out", "duration": 0.3 }
+    },
+    {
+      "slot_id": "slot_3", "type": "video",
+      "start": 5.50, "end": 6.00,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_4", "type": "video",
+      "start": 6.00, "end": 6.50,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_5", "type": "video",
+      "start": 6.50, "end": 7.00,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_6", "type": "video",
+      "start": 7.00, "end": 7.50,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_7", "type": "video",
+      "start": 7.50, "end": 8.00,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_8", "type": "video",
+      "start": 8.00, "end": 8.50,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_9", "type": "video",
+      "start": 8.50, "end": 9.00,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_10", "type": "video",
+      "start": 9.00, "end": 9.50,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_11", "type": "video",
+      "start": 9.50, "end": 10.00,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_12", "type": "video",
+      "start": 10.00, "end": 10.50,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_13", "type": "video",
+      "start": 10.50, "end": 11.00,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_14", "type": "video",
+      "start": 11.00, "end": 11.50,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_15", "type": "video",
+      "start": 11.50, "end": 12.00,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_16", "type": "video",
+      "start": 12.00, "end": 12.50,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_17", "type": "video",
+      "start": 12.50, "end": 13.00,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_18", "type": "video",
+      "start": 13.00, "end": 13.50,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_19", "type": "video",
+      "start": 13.50, "end": 14.00,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_20", "type": "video",
+      "start": 14.00, "end": 14.50,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_21", "type": "video",
+      "start": 14.50, "end": 15.00,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_22", "type": "video",
+      "start": 15.00, "end": 15.50,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_23", "type": "video",
+      "start": 15.50, "end": 16.00,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_24", "type": "video",
+      "start": 16.00, "end": 16.50,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "slot_id": "slot_25", "type": "video",
+      "start": 16.50, "end": 17.00,
+      "layout": { "x": 0, "y": 0, "w": 1080, "h": 1920 },
+      "transition_in": { "type": "cut" }
+    },
+    {
+      "type": "text", "slot_id": "slot_1",
+      "start": 0.00, "end": 0.60,
+      "content": { "editable": true, "placeholder": "Jhooth bolo" },
+      "style": { "size": 68, "color": "#FFD60A", "x": 540, "y": 960, "align": "center", "font_style": "cursive" }
+    },
+    {
+      "type": "text", "slot_id": "slot_2",
+      "start": 0.80, "end": 1.40,
+      "content": { "editable": true, "placeholder": "Jhagada karo" },
+      "style": { "size": 68, "color": "#FFD60A", "x": 540, "y": 960, "align": "center", "font_style": "cursive" }
+    },
+    {
+      "type": "text", "slot_id": "slot_3",
+      "start": 1.60, "end": 2.20,
+      "content": { "editable": true, "placeholder": "Bahane banao" },
+      "style": { "size": 68, "color": "#FFD60A", "x": 540, "y": 960, "align": "center", "font_style": "cursive" }
+    },
+    {
+      "type": "text", "slot_id": "slot_4",
+      "start": 2.40, "end": 3.00,
+      "content": { "editable": true, "placeholder": "Lekin" },
+      "style": { "size": 68, "color": "#FFFFFF", "x": 540, "y": 960, "align": "center" }
+    },
+    {
+      "type": "text", "slot_id": "slot_5",
+      "start": 3.20, "end": 3.80,
+      "content": { "editable": true, "placeholder": "Ghar se" },
+      "style": { "size": 68, "color": "#FFD60A", "x": 540, "y": 960, "align": "center", "font_style": "cursive" }
+    },
+    {
+      "type": "text", "slot_id": "slot_6",
+      "start": 4.00, "end": 4.80,
+      "content": { "editable": true, "placeholder": "BAHAR NIKLO!!!" },
+      "style": { "size": 100, "color": "#FFD60A", "x": 540, "y": 960, "align": "center" }
+    }
+  ]
+}

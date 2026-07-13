@@ -1,13 +1,14 @@
 {
   "id": "landscape_reveal",
   "name": "Landscape Reveal",
-  "description": "6-strip horizontal split reveal, followed by a solo centered landscape strip.",
+  "description": "6-strip horizontal split reveal playing all together with custom beat timing and no audio fade-out. Fits a 14-second timeline.",
   "aspect_ratio": "9:16",
   "canvas": { "w": 1080, "h": 1920, "fps": 30 },
   "music_mode": "static",
-  "music_file": "static/music/landscape_reveal_song.mp3",
+  "music_file": "music/landscape_reveal_song.mp3",
   "music_query": "cinematic ambient landscape music, slow epic strings",
-  "total_duration": 18.90,
+  "music_fade": false,
+  "total_duration": 14.00,
   "slots": [
     { "id": "slot_1", "label": "Strip 1 (Top) | 'Maybe it's 6:45'" },
     { "id": "slot_2", "label": "Strip 2 | 'Maybe I'm barely alive'" },
@@ -19,81 +20,75 @@
   "tracks": [
     {
       "slot_id": "slot_1", "type": "video",
-      "start": 0.00, "end": 14.83,
+      "start": 0.00, "end": 14.00,
       "layout": { "x": 0, "y": 0, "w": 1080, "h": 320 },
       "transition_in": { "type": "cut" }
     },
     {
       "slot_id": "slot_2", "type": "video",
-      "start": 2.24, "end": 14.83,
+      "start": 1.00, "end": 14.00,
       "layout": { "x": 0, "y": 320, "w": 1080, "h": 320 },
       "transition_in": { "type": "cut" }
     },
     {
       "slot_id": "slot_3", "type": "video",
-      "start": 4.48, "end": 14.83,
+      "start": 3.00, "end": 14.00,
       "layout": { "x": 0, "y": 640, "w": 1080, "h": 320 },
       "transition_in": { "type": "cut" }
     },
     {
-      "slot_id": "slot_3", "type": "video",
-      "start": 14.83, "end": 18.90,
-      "layout": { "x": 0, "y": 800, "w": 1080, "h": 320 },
-      "transition_in": { "type": "cut" }
-    },
-    {
       "slot_id": "slot_4", "type": "video",
-      "start": 6.72, "end": 14.83,
+      "start": 7.00, "end": 14.00,
       "layout": { "x": 0, "y": 960, "w": 1080, "h": 320 },
       "transition_in": { "type": "cut" }
     },
     {
       "slot_id": "slot_5", "type": "video",
-      "start": 8.96, "end": 14.83,
+      "start": 9.00, "end": 14.00,
       "layout": { "x": 0, "y": 1280, "w": 1080, "h": 320 },
       "transition_in": { "type": "cut" }
     },
     {
       "slot_id": "slot_6", "type": "video",
-      "start": 11.20, "end": 14.83,
+      "start": 11.00, "end": 14.00,
       "layout": { "x": 0, "y": 1600, "w": 1080, "h": 320 },
       "transition_in": { "type": "cut" }
     },
     {
       "type": "text", "slot_id": "slot_1",
-      "start": 0.00, "end": 14.83,
+      "start": 0.00, "end": 14.00,
       "content": { "editable": true, "placeholder": "Maybe it's 6:45" },
-      "style": { "size": 56, "color": "#FFFFFF", "x": 540, "y": 132, "align": "center" }
+      "style": { "size": 30, "color": "#FFFFFF", "x": 540, "y": 132, "align": "center" }
     },
     {
       "type": "text", "slot_id": "slot_2",
-      "start": 2.24, "end": 14.83,
+      "start": 1.00, "end": 14.00,
       "content": { "editable": true, "placeholder": "Maybe I'm barely alive" },
-      "style": { "size": 56, "color": "#FFFFFF", "x": 540, "y": 452, "align": "center" }
+      "style": { "size": 30, "color": "#FFFFFF", "x": 540, "y": 452, "align": "center" }
     },
     {
       "type": "text", "slot_id": "slot_3",
-      "start": 4.48, "end": 14.83,
+      "start": 3.00, "end": 14.00,
       "content": { "editable": true, "placeholder": "Maybe you've taken my shit for the last time, yeah" },
-      "style": { "size": 56, "color": "#FFFFFF", "x": 540, "y": 772, "align": "center" }
+      "style": { "size": 30, "color": "#FFFFFF", "x": 540, "y": 772, "align": "center" }
     },
     {
       "type": "text", "slot_id": "slot_4",
-      "start": 6.72, "end": 14.83,
+      "start": 7.00, "end": 14.00,
       "content": { "editable": true, "placeholder": "Maybe I know that I'm drunk" },
-      "style": { "size": 56, "color": "#FFFFFF", "x": 540, "y": 1092, "align": "center" }
+      "style": { "size": 30, "color": "#FFFFFF", "x": 540, "y": 1092, "align": "center" }
     },
     {
       "type": "text", "slot_id": "slot_5",
-      "start": 8.96, "end": 14.83,
+      "start": 9.00, "end": 14.00,
       "content": { "editable": true, "placeholder": "Maybe I know you're the one" },
-      "style": { "size": 56, "color": "#FFFFFF", "x": 540, "y": 1412, "align": "center" }
+      "style": { "size": 30, "color": "#FFFFFF", "x": 540, "y": 1412, "align": "center" }
     },
     {
       "type": "text", "slot_id": "slot_6",
-      "start": 11.20, "end": 14.83,
+      "start": 11.00, "end": 14.00,
       "content": { "editable": true, "placeholder": "Maybe you thinking it's better if you drive" },
-      "style": { "size": 56, "color": "#FFFFFF", "x": 540, "y": 1732, "align": "center" }
+      "style": { "size": 30, "color": "#FFFFFF", "x": 540, "y": 1732, "align": "center" }
     }
   ]
 }

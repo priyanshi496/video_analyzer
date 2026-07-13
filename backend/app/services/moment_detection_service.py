@@ -117,12 +117,12 @@ class MomentDetectionService:
 
     def _build_analysis_prompt(self, transcript_text: str) -> str:
         return f"""Analyze the following transcript and find 4 powerful key moments.
-Also extract a comprehensive list of 25-35 important highlight words or phrases from the entire transcript. These must include:
-- Core calls to action (e.g. "today", "now", "start", "join")
-- Important lessons, takeaways, or concepts (e.g. "fundamentals", "shortcuts", "skills", "build", "career")
+Also extract a comprehensive list of 45-60 important highlight words or phrases from the entire transcript. You must be extremely generous in extracting key terms. Include:
+- Core calls to action or action-inducing words (e.g. "today", "now", "start", "stop", "join", "do", "must", "focus", "need", "go", "try", "make", "take")
+- Important lessons, takeaways, or concepts (e.g. "fundamentals", "shortcuts", "skills", "build", "career", "important", "lesson", "value", "key", "insight", "success", "approach")
 - Key technologies, nouns, or tools (e.g. "LangChain", "MCP", "AI")
-- Statistics, figures, or metrics
-- Strong emphasis/power words (e.g. "serious", "completely", "must", "always")
+- Statistics, figures, numbers, or metrics
+- Strong emphasis, emotion, or power words (e.g. "serious", "completely", "never", "always", "perfectly", "absolutely", "incredible", "crazy", "worst", "best", "greatest")
 
 TRANSCRIPT:
 {transcript_text}

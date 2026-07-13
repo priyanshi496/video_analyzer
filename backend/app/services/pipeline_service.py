@@ -1091,13 +1091,8 @@ def run_story_context_analysis(video_infos: list, vibe: str, directives: str, tm
     from app.services.llm_service import call_openrouter_multiimage, call_openrouter_text
 
     asset_summaries = []
-    MAX_THUMBNAILS = 8
 
     for idx, info in enumerate(video_infos):
-        if idx >= MAX_THUMBNAILS:
-            logging.info(f"  ⏭  Skipping story context for asset {idx} (max {MAX_THUMBNAILS} thumbnails).")
-            break
-
         thumb_path = extract_thumbnail(info["path"], tmpdir)
         if thumb_path:
             asset_summaries.append({
@@ -1113,40 +1108,59 @@ def run_story_context_analysis(video_infos: list, vibe: str, directives: str, tm
         return None
 
     num_assets = len(asset_summaries)
-    image_paths = [a["thumbnail_path"] for a in asset_summaries]
 
-    # ── STEP 1: Nemotron (NVIDIA NIM) — Visual Analysis ───────────────────────
+    # ── STEP 1: Nemotron (NVIDIA NIM) — Visual Analysis in batches ────────────
+    # Send thumbnails in batches of BATCH_SIZE to avoid context-window overload.
+    # All per-batch descriptions are merged into a single list for Step 2.
+    BATCH_SIZE = 6
     vision_model = CONFIG.get("story_vision_model", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
-    vision_prompt = build_story_vision_prompt(asset_summaries)
-    logging.info(f"  🔍 [Story Step 1/2] Sending {num_assets} thumbnails to {vision_model} for visual analysis...")
-
     asset_descriptions = []
-    try:
-        import time
-        start_t = time.time()
-        raw_vision = call_openrouter_multiimage(image_paths, vision_prompt, vision_model)
-        dur = time.time() - start_t
-        vision_parsed = parse_json_response(raw_vision)
-        
-        from app.services.logger_service import log_llm_call
-        log_llm_call(
-            label="story_context_vision", 
-            model=vision_model, 
-            prompt=vision_prompt, 
-            raw_response=raw_vision, 
-            parsed=vision_parsed if isinstance(vision_parsed, dict) else None,
-            duration_sec=dur
-        )
-        
-        if isinstance(vision_parsed, dict) and "asset_descriptions" in vision_parsed:
-            asset_descriptions = vision_parsed["asset_descriptions"]
-            logging.info(f"  ✓ [Step 1] Visual analysis complete: {len(asset_descriptions)} asset(s) described.")
-        else:
-            logging.warning("  ⚠️  [Step 1] Vision model returned unexpected schema. Proceeding with filenames only.")
-    except Exception as e:
-        logging.error(f"  ✗ [Step 1] Vision analysis failed: {e}. Proceeding with filenames only.")
 
-    # If vision step failed or returned incomplete data, build minimal descriptions from filenames
+    total_batches = (num_assets + BATCH_SIZE - 1) // BATCH_SIZE
+    logging.info(f"  🔍 [Story Step 1/2] Processing {num_assets} assets in {total_batches} batch(es) of up to {BATCH_SIZE}...")
+
+    for batch_num, batch_start in enumerate(range(0, num_assets, BATCH_SIZE), start=1):
+        batch = asset_summaries[batch_start : batch_start + BATCH_SIZE]
+        batch_image_paths = [a["thumbnail_path"] for a in batch]
+        vision_prompt = build_story_vision_prompt(batch)
+
+        logging.info(
+            f"  🔍 [Batch {batch_num}/{total_batches}] "
+            f"Sending assets {batch[0]['index']}–{batch[-1]['index']} to {vision_model}..."
+        )
+
+        try:
+            import time
+            start_t = time.time()
+            raw_vision = call_openrouter_multiimage(batch_image_paths, vision_prompt, vision_model)
+            dur = time.time() - start_t
+            vision_parsed = parse_json_response(raw_vision)
+
+            from app.services.logger_service import log_llm_call
+            log_llm_call(
+                label=f"story_context_vision_batch{batch_num}",
+                model=vision_model,
+                prompt=vision_prompt,
+                raw_response=raw_vision,
+                parsed=vision_parsed if isinstance(vision_parsed, dict) else None,
+                duration_sec=dur
+            )
+
+            if isinstance(vision_parsed, dict) and "asset_descriptions" in vision_parsed:
+                batch_descs = vision_parsed["asset_descriptions"]
+                # Re-map the indices returned by the model (0-based within the batch)
+                # to the real global asset indices
+                for i, desc in enumerate(batch_descs):
+                    real_idx = batch[i]["index"] if i < len(batch) else batch_start + i
+                    desc["index"] = real_idx
+                asset_descriptions.extend(batch_descs)
+                logging.info(f"  ✓ [Batch {batch_num}] {len(batch_descs)} asset(s) described.")
+            else:
+                logging.warning(f"  ⚠️  [Batch {batch_num}] Vision model returned unexpected schema.")
+        except Exception as e:
+            logging.error(f"  ✗ [Batch {batch_num}] Vision analysis failed: {e}. Will use filename fallback.")
+
+    # If any assets are still missing descriptions, fill in filename fallbacks
     if not asset_descriptions or len(asset_descriptions) < num_assets:
         logging.info("  🔄 Filling missing asset descriptions from filenames...")
         described_indices = {d.get("index") for d in asset_descriptions}
@@ -1161,7 +1175,9 @@ def run_story_context_analysis(video_infos: list, vibe: str, directives: str, tm
                     "emotional_tone": "unknown",
                     "trip_phase": "unknown"
                 })
+
     asset_descriptions = sorted(asset_descriptions, key=lambda d: d.get("index", 0))
+
     # Enrich descriptions with geocoded location name and creation time
     summaries_by_idx = {a["index"]: a for a in asset_summaries}
     for desc in asset_descriptions:
@@ -2230,7 +2246,7 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                 if music_config and music_config.get("mode") != "none":
                     logging.info(f"  🎵 [Pipeline] Running music selection flow. Mode: {music_config.get('mode')}")
                     from app.services.music_service import resolve_custom_music, pick_ai_music, mix_music_into_video, resolve_suno_music
-                    from app.services.spotify_service import get_spotify_hookline_start
+                    from app.services.audio_analysis_service import get_local_hookline_start
                     import os
                     
                     music_path = None
@@ -2253,7 +2269,7 @@ def analyze_video_project(self, project_id: str, job_id: str, media_assets: list
                         
                     if music_path and os.path.exists(music_path):
                         # Detect hookline start via Spotify (falls back to 0.0 safely if unavailable)
-                        hook_start = get_spotify_hookline_start(song_title) if song_title else 0.0
+                        hook_start = get_local_hookline_start(music_path) if music_path else 0.0
                         logging.info(f"  🎵 [Pipeline] Music resolved to local path: {music_path}. Hookline start: {hook_start:.1f}s. Mixing...")
                         mixed_reel_path = Path(tmpdir) / "final_video_mixed.mp4"
                         try:
@@ -2503,7 +2519,7 @@ def continue_video_analysis(self, job_id: str, confirmed_order: list, confirmed_
                 if music_config and music_config.get("mode") != "none":
                     logging.info(f"  🎵 [Pipeline Phase 2] Running music selection flow. Mode: {music_config.get('mode')}")
                     from app.services.music_service import resolve_custom_music, pick_ai_music, mix_music_into_video, resolve_suno_music
-                    from app.services.spotify_service import get_spotify_hookline_start
+                    from app.services.audio_analysis_service import get_local_hookline_start
                     
                     music_path = None
                     song_title = ""
@@ -2524,7 +2540,7 @@ def continue_video_analysis(self, job_id: str, confirmed_order: list, confirmed_
                         
                     if music_path and os.path.exists(music_path):
                         # Detect hookline start via Spotify (falls back to 0.0 safely if unavailable)
-                        hook_start = get_spotify_hookline_start(song_title) if song_title else 0.0
+                        hook_start = get_local_hookline_start(music_path) if music_path else 0.0
                         logging.info(f"  🎵 [Pipeline Phase 2] Music resolved to local path: {music_path}. Hookline start: {hook_start:.1f}s. Mixing...")
                         mixed_reel_path = Path(tmpdir) / "final_video_mixed.mp4"
                         try:
@@ -2773,22 +2789,37 @@ def render_project_from_template(self, project_id: str, job_id: str, template_id
             music_file  = template.get("music_file")  # relative path for static mode
 
             if music_mode == "static" and music_file:
-                # Use a bundled local audio file (relative to backend root)
+                # Resolve local path (relative to backend root)
                 backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                 static_music_path = os.path.join(backend_root, music_file)
+                if not os.path.exists(static_music_path):
+                    logging.info(f"🎵 [Template Engine] Static music {music_file} not found locally. Fetching from MinIO...")
+                    try:
+                        os.makedirs(os.path.dirname(static_music_path), exist_ok=True)
+                        from app.services.storage_service import storage_service
+                        if storage_service.object_exists(music_file):
+                            storage_service.download_file(music_file, static_music_path)
+                            logging.info(f"🎵 [Template Engine] Downloaded static music from MinIO to {static_music_path}")
+                        else:
+                            logging.warning(f"⚠️ [Template Engine] Static music key {music_file} not found in MinIO.")
+                    except Exception as download_err:
+                        logging.error(f"❌ [Template Engine] Failed to download static music from MinIO: {download_err}")
+
                 if os.path.exists(static_music_path):
                     logging.info(f"🎵 [Template Engine] Using static music: {static_music_path}")
                     mixed_reel_path = temp_dir_path / "final_video_mixed.mp4"
                     try:
                         from app.services.music_service import mix_music_into_video
-                        mix_music_into_video(str(reel_path), static_music_path, str(mixed_reel_path))
+                        music_start = template.get("music_start", 0.0)
+                        music_fade = template.get("music_fade", True)
+                        mix_music_into_video(str(reel_path), static_music_path, str(mixed_reel_path), audio_start=music_start, fade=music_fade)
                         if mixed_reel_path.exists():
                             reel_path = mixed_reel_path
                             logging.info("🎵 [Template Engine] Static music successfully mixed.")
                     except Exception as mix_err:
                         logging.error(f"❌ [Template Engine] Failed to mix static music: {mix_err}")
                 else:
-                    logging.warning(f"⚠️ [Template Engine] Static music file not found: {static_music_path}. Skipping music.")
+                    logging.warning(f"⚠️ [Template Engine] Static music file not found in local path or MinIO: {music_file}. Skipping music.")
 
             elif music_mode != "none" and music_query:
                 logging.info(f"🎵 [Template Engine] Adding template music background: {music_query}...")

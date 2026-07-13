@@ -1,4 +1,10 @@
 import os
+import sys
+
+# Prepend local bin containing static FFmpeg/FFprobe with drawtext support to PATH
+base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+local_bin = os.path.join(base_dir, "bin")
+os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
 
 # Fix macOS Objective-C threading crash during multiprocessing fork
 os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"

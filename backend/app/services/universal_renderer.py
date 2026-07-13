@@ -122,6 +122,16 @@ def render_universal_template(
                 # fade in from black over fade_dur seconds
                 chain += f",fade=t=in:st=0:d={fade_dur}"
 
+            elif tin_type == "zoom_out":
+                fade_dur = float(tin.get("duration", 0.3))
+                fade_frames = int(fade_dur * FPS)
+                # Zoom out centered from 1.25x to 1.0x over fade_dur seconds
+                chain += (
+                    f",zoompan=z='if(lte(on\\,{fade_frames})\\,1.25-0.25*(on/{fade_frames})\\,1)':"
+                    f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                    f"d=1:s={W}x{H}"
+                )
+
             # elif tin_type == "cut": nothing extra needed
 
             chain += f"[v{i}]"
@@ -167,22 +177,37 @@ def render_universal_template(
         #   (default) — text appears instantly at start, disappears at end
 
         drawtext_chains = []
+        temp_files = []
+        
         if text_tracks and _drawtext_available():
-            # Discover local font file to prevent missing font errors
-            font_paths = [
+            # Discover local standard font
+            standard_paths = [
                 "/System/Library/Fonts/Supplemental/Arial.ttf",
                 "/System/Library/Fonts/Helvetica.ttc",
                 "/Library/Fonts/Arial.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             ]
-            font_file = next((p for p in font_paths if os.path.exists(p)), None)
+            font_file = next((p for p in standard_paths if os.path.exists(p)), None)
+
+            # Discover local cursive font
+            cursive_paths = [
+                "/System/Library/Fonts/Supplemental/Brush Script.ttf",
+                "/System/Library/Fonts/Supplemental/SignPainter.ttc",
+                "/System/Library/Fonts/Supplemental/SnellRoundhand.ttc",
+                "/System/Library/Fonts/Supplemental/Bradley Hand Bold.ttf",
+            ]
+            cursive_font_file = next((p for p in cursive_paths if os.path.exists(p)), font_file)
 
             for t in text_tracks:
                 content = t.get("content", {})
                 # Use user-supplied value if present, else placeholder
                 text = content.get("value") or content.get("placeholder", "")
-                # Escape single quotes for FFmpeg using standard close-escape-reopen pattern
-                text = text.replace("'", "'\\''").replace(":", "\\:")
+                
+                # Write text to a temporary file to avoid FFmpeg escaping hell
+                tf = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt")
+                tf.write(text)
+                tf.close()
+                temp_files.append(tf.name)
 
                 style  = t.get("style", {})
                 anim   = t.get("animation", {})
@@ -194,6 +219,13 @@ def render_universal_template(
                 tx         = style.get("x", W // 2)
                 ty         = int(style.get("y", H - 200))
                 align      = style.get("align", "center")
+                font_style = style.get("font_style", "")
+
+                # Pick cursive or standard font
+                track_font = cursive_font_file if font_style == "cursive" else font_file
+
+                # Log to verify coordinates
+                logger.info(f"Text track start={tstart} tx={tx} ty={ty} text='{text}'")
 
                 # x position: center-align by default
                 if align == "center":
@@ -216,13 +248,20 @@ def render_universal_template(
                 else:
                     y_expr = str(ty)
 
+                # alpha animation (fade-in)
+                if anim_type == "fade_in":
+                    adur = float(anim.get("duration", 0.6))
+                    alpha_expr = f"if(lt(t\\,{tstart})\\,0\\,if(lt(t\\,{tstart+adur:.3f})\\,(t-{tstart})/{adur:.3f}\\,1))"
+                else:
+                    alpha_expr = "1"
+
                 use_box = style.get("box", False)
                 drawtext_params = (
                     f"drawtext="
-                    f"text='{text}'"
+                    f"textfile='{tf.name}'"
                 )
-                if font_file:
-                    drawtext_params += f":fontfile='{font_file}'"
+                if track_font:
+                    drawtext_params += f":fontfile='{track_font}'"
                 drawtext_params += (
                     f":fontsize={font_size}"
                     f":fontcolor=0x{font_color}"
@@ -230,6 +269,7 @@ def render_universal_template(
                     f":bordercolor=black"
                     f":x={x_expr}"
                     f":y={y_expr}"
+                    f":alpha='{alpha_expr}'"
                     f":enable='between(t\\,{tstart}\\,{tend})'"
                 )
                 if use_box:
@@ -263,7 +303,14 @@ def render_universal_template(
                 output_path,
             ]
         )
-        _run(cmd, "universal render")
+        try:
+            _run(cmd, "universal render")
+        finally:
+            for tf in temp_files:
+                try:
+                    os.unlink(tf)
+                except Exception:
+                    pass
 
     logger.info(f"✅ [UniversalRenderer] Written to {output_path}")
     return output_path

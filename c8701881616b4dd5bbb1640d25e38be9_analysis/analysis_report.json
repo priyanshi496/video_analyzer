@@ -1,0 +1,46 @@
+{
+  "video_properties": {
+    "width": 720,
+    "height": 1280,
+    "fps": 30.0,
+    "aspect_ratio": "720:1280",
+    "orientation": "portrait",
+    "total_duration_sec": 9.0
+  },
+  "editing_pattern": {
+    "total_clips": 2,
+    "avg_clip_duration_sec": 4.5,
+    "min_clip_duration_sec": 3.0,
+    "max_clip_duration_sec": 6.0,
+    "clips_per_second": 0.22,
+    "editing_pace": "slow"
+  },
+  "caption_analysis": {
+    "clips_with_captions_pct": 100,
+    "captions_present": true,
+    "caption_position": "bottom"
+  },
+  "audio": {
+    "extracted_to": "c8701881616b4dd5bbb1640d25e38be9_analysis/audio_extracted.mp3",
+    "instructions": "Upload audio_extracted.mp3 to https://audd.io or use the Shazam app to identify the track.",
+    "has_audio": true
+  },
+  "clip_timeline": [
+    {
+      "clip_index": 1,
+      "start_sec": 0.0,
+      "end_sec": 3.0,
+      "duration_sec": 3.0,
+      "likely_has_caption": true,
+      "sample_frame": "c8701881616b4dd5bbb1640d25e38be9_analysis/frames/clip_001_t0.75.jpg"
+    },
+    {
+      "clip_index": 2,
+      "start_sec": 3.0,
+      "end_sec": 9.0,
+      "duration_sec": 6.0,
+      "likely_has_caption": true,
+      "sample_frame": "c8701881616b4dd5bbb1640d25e38be9_analysis/frames/clip_002_t4.50.jpg"
+    }
+  ]
+}
