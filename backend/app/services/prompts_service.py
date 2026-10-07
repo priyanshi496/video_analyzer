@@ -931,11 +931,10 @@ Your job is to:
 
 CRITICAL: EXIF METADATA & LOCATION GROUNDING
 You are provided with real-world Location and Time metadata for each asset. You MUST use these real names/details to ground your story:
-- If location metadata points to a specific place (e.g. "Shree Kashtabhanjan dev Hanuman Temple, Salangpur" or a specific town), refer to it directly in the title and narrative.
-- Do NOT use generic placeholder phrases like "Temple of the Giant Deity" if a specific real-world temple name is available.
+- If location metadata points to a specific place (e.g. a specific landmark, monument, beach, or town name found in metadata), refer to it directly in the title and narrative.
+- If the location or time is "unknown", describe the scene based strictly on the visual elements present in the footage (e.g., celebration, family gathering, travel, outdoor nature) rather than hallucinating specific real-world temple/place names not in the footage.
 - Use the real-world creation times to structure the timeline of your narrative.
-- IMPORTANT RULE: If the location or time is "unknown", you must creatively invent a poetic, fictional location or time based on the visual setting.
-- ABSOLUTE PROHIBITION: You are a storyteller, not a computer. NEVER use the words "metadata", "assets", "data", "vision model", or "unknown" in your story. NEVER break the fourth wall or complain about missing data. If data is missing, just imagine the details!
+- ABSOLUTE PROHIBITION: You are a storyteller, not a computer. NEVER use the words "metadata", "assets", "data", "vision model", or "unknown" in your story. NEVER break the fourth wall or complain about missing data.
 
 ━━━ VISUAL ANALYSIS (from vision AI) ━━━
 {desc_block}

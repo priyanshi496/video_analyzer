@@ -234,8 +234,8 @@ def pick_ai_music(vibe: str, final_segs: list, tmpdir: str) -> tuple[str, str]:
     )
     
     try:
-        text_model = "openrouter/owl-alpha"
-        fallbacks = ["openai/gpt-oss-120b:free"]
+        text_model = "inclusionai/ling-3.1-flash"
+        fallbacks = ["google/gemma-4-31b-it:free", "openrouter/free"]
         res = call_openrouter_text(prompt, model=text_model, fallbacks=fallbacks)
         slug_res = res.strip().strip('"').strip("'")
         if slug_res == "NOT_FOUND":

@@ -2594,12 +2594,9 @@ def render_project_from_template(self, project_id: str, job_id: str, template_id
     from app.services.storage_service import storage_service
     from app.services.stitch_service import trim_and_normalize_clip, build_reel_from_segments
     
-    # Establish a local task loop
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+    # Establish a fresh task loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
         
     task_engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool, echo=False)
     TaskSessionLocal = async_sessionmaker(task_engine, expire_on_commit=False)
@@ -2856,4 +2853,11 @@ def render_project_from_template(self, project_id: str, job_id: str, template_id
         raise
         
     finally:
-        loop.run_until_complete(task_engine.dispose())
+        try:
+            loop.run_until_complete(task_engine.dispose())
+        except Exception:
+            pass
+        try:
+            loop.close()
+        except Exception:
+            pass

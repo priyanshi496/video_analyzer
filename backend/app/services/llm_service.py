@@ -115,9 +115,9 @@ def _post_with_retry(payload: dict, headers: dict, timeout: int, label: str = ""
         url = "https://openrouter.ai/api/v1/chat/completions"
         provider = "OpenRouter"
         target_key = settings.OPENROUTER_API_KEY or settings.NVIDIA_API_KEY
-        if model_name.startswith("nvidia/") and not model_name.endswith(":free") and NVIDIA_UNHEALTHY:
-            payload_copy["model"] = f"{model_name}:free"
-            logger.info(f"  🔀 NVIDIA circuit broken! Automatically re-routed to OpenRouter fallback model: {payload_copy['model']}")
+        if model_name.startswith("nvidia/") and NVIDIA_UNHEALTHY:
+            payload_copy["model"] = "inclusionai/ling-3.1-flash"
+            logger.info(f"  🔀 NVIDIA circuit broken! Automatically re-routed to OpenRouter model: {payload_copy['model']}")
 
     req_headers = dict(headers)
     if target_key:
@@ -277,9 +277,9 @@ def call_openrouter_multiimage(
     headers = _build_headers(api_key)
     models_to_try = [
         model, 
-        "google/gemini-3.5-flash", 
-        "google/gemini-flash-1.5:free",
-        "meta-llama/llama-3.2-11b-vision-instruct:free"
+        "inclusionai/ling-3.1-flash",
+        "google/gemma-4-31b-it:free",
+        "openrouter/free"
     ]
     last_err = None
 
@@ -290,7 +290,7 @@ def call_openrouter_multiimage(
             "temperature": 0,
             "max_tokens":  4096,
         }
-        result, err = _post_with_retry(payload, headers, timeout=120, label=model_name)
+        result, err = _post_with_retry(payload, headers, timeout=60, label=model_name)
         if result is not None:
             try:
                 from app.services.prompts_service import parse_json_response
@@ -318,9 +318,9 @@ def call_openrouter_text(prompt: str, model: str, fallbacks: list = None, temper
     headers = _build_headers(api_key)
     if fallbacks is None:
         fallbacks = [
-            "google/gemini-flash-1.5-8b:free",
-            "meta-llama/llama-3-8b-instruct:free",
-            "google/gemini-flash-1.5:free"
+            "inclusionai/ling-3.1-flash",
+            "google/gemma-4-31b-it:free",
+            "openrouter/free"
         ]
     models_to_try = [model] + fallbacks
     last_err = None
