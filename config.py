@@ -10,7 +10,7 @@ CONFIG = {
     # Fallbacks tried IN ORDER if primary fails or returns invalid JSON
     "fallback_models": [
         "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-        "google/gemma-4-31b-it:free",  # free fallback
+        "inclusionai/ling-3.1-flash",  # free fallback
     ],
 
     # Max tokens limits for API calls to prevent reasoning model over-thinking

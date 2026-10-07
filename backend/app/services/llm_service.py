@@ -278,7 +278,6 @@ def call_openrouter_multiimage(
     models_to_try = [
         model, 
         "inclusionai/ling-3.1-flash",
-        "google/gemma-4-31b-it:free",
         "openrouter/free"
     ]
     last_err = None
@@ -319,7 +318,6 @@ def call_openrouter_text(prompt: str, model: str, fallbacks: list = None, temper
     if fallbacks is None:
         fallbacks = [
             "inclusionai/ling-3.1-flash",
-            "google/gemma-4-31b-it:free",
             "openrouter/free"
         ]
     models_to_try = [model] + fallbacks

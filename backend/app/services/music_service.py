@@ -235,7 +235,7 @@ def pick_ai_music(vibe: str, final_segs: list, tmpdir: str) -> tuple[str, str]:
     
     try:
         text_model = "inclusionai/ling-3.1-flash"
-        fallbacks = ["google/gemma-4-31b-it:free", "openrouter/free"]
+        fallbacks = ["openrouter/free"]
         res = call_openrouter_text(prompt, model=text_model, fallbacks=fallbacks)
         slug_res = res.strip().strip('"').strip("'")
         if slug_res == "NOT_FOUND":
@@ -346,7 +346,7 @@ def generate_suno_prompt_from_descriptions(vibe: str, final_segs: list, instrume
     )
     
     try:
-        res = call_openrouter_text(prompt, model="google/gemini-flash-1.5-8b")
+        res = call_openrouter_text(prompt, model="inclusionai/ling-3.1-flash")
         cleaned = res.strip().replace('"', '').replace("'", "")
         cleaned = cleaned[:200]
         logger.info(f"Generated Suno prompt: '{cleaned}'")

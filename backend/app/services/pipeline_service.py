@@ -1198,7 +1198,7 @@ def run_story_context_analysis(video_infos: list, vibe: str, directives: str, tm
         raw_narrative = call_openrouter_text(
             narrative_prompt,
             model=narrative_model,
-            fallbacks=["openai/gpt-4o-mini", "google/gemini-flash-1.5"],
+            fallbacks=["inclusionai/ling-3.1-flash", "openrouter/free"],
             temperature=0.7,  # slightly creative for narrative writing
         )
         dur = time.time() - start_t
